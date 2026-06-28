@@ -798,7 +798,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Message: `feat(infra): vercel.json rewrites + env example + gitignore`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 6. **/api/note.ts — GET latest + POST upsert**
+- [x] 6. **/api/note.ts — GET latest + POST upsert**
 
   **What to do**:
   - Create `api/note.ts` exporting default async handler `(req, res) => { ... }` typed for `VercelRequest`/`VercelResponse`
@@ -930,7 +930,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `api/note.ts`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 7. **/api/upload.ts — POST multipart via busboy with 4.5MB cap**
+- [x] 7. **/api/upload.ts — POST multipart via busboy with 4.5MB cap**
 
   **What to do**:
   - Create `api/upload.ts` with default async handler
@@ -1068,7 +1068,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `api/upload.ts`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 8. **/api/documents.ts — GET metadata list (no file_data)**
+- [x] 8. **/api/documents.ts — GET metadata list (no file_data)**
 
   **What to do**:
   - Create `api/documents.ts` default async handler
@@ -1160,7 +1160,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `api/documents.ts`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 9. **/api/download.ts — GET binary with proper headers**
+- [x] 9. **/api/download.ts — GET binary with proper headers**
 
   **What to do**:
   - Create `api/download.ts` default async handler
@@ -1288,7 +1288,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `api/download.ts`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 10. **/api/ai.ts — POST to NVIDIA NIM with 8s AbortController**
+- [x] 10. **/api/ai.ts — POST to NVIDIA NIM with 8s AbortController**
 
   **What to do**:
   - Create `api/ai.ts` default async handler
