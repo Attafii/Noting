@@ -36,6 +36,24 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-06-28T17:55:27.396Z"
+    },
+    "todo:11": {
+      "task_key": "todo:11",
+      "task_label": "11",
+      "task_title": "**Dashboard Layout Shell (src/routes/index.tsx + base layout)**",
+      "session_id": "ses_0f09b916fffe4aknOORIyNkyKn",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-06-28T18:03:14.579Z"
+    },
+    "todo:14": {
+      "task_key": "todo:14",
+      "task_label": "14",
+      "task_title": "**Dashboard Integration (wire editor + file ecosystem into index.tsx)**",
+      "session_id": "ses_0f0971867ffe7S0dQ3NGB5Bjxq",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-06-28T18:06:41.230Z"
     }
   }
 }

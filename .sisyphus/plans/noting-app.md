@@ -1436,7 +1436,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `api/ai.ts`
   - Pre-commit: `tsc --noEmit`
 
-- [ ] 11. **Dashboard Layout Shell (src/routes/index.tsx + base layout)**
+- [x] 11. **Dashboard Layout Shell (src/routes/index.tsx + base layout)**
 
   **What to do**:
   - Replace placeholder `src/routes/index.tsx` with real dashboard shell:
@@ -1543,7 +1543,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `src/routes/index.tsx`
   - Pre-commit: `tsc --noEmit && npm run build`
 
-- [ ] 12. **NoteEditor Component with 500ms Debounce + Format with NIM**
+- [x] 12. **NoteEditor Component with 500ms Debounce + Format with NIM**
 
   **What to do**:
   - Create `src/components/NoteEditor.tsx`
@@ -1693,7 +1693,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `src/components/NoteEditor.tsx`
   - Pre-commit: `tsc --noEmit && npm run build`
 
-- [ ] 13. **FileDropzone + DocumentList Components**
+- [x] 13. **FileDropzone + DocumentList Components**
 
   **What to do**:
   - Create `src/components/FileDropzone.tsx`:
