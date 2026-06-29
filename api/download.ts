@@ -7,7 +7,9 @@ function encodeRFC5987(value: string): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
+  // Support token from header OR query param (for <a href> downloads that can't set headers)
+  const queryToken = req.query?.token;
+  if (!validateToken(req) && queryToken !== process.env.GLOBAL_SECRET_TOKEN) {
     unauthorizedResponse(res);
     return;
   }

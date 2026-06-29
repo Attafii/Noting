@@ -23,12 +23,19 @@ export default function NoteEditor() {
     }
   }, [data]);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const postNote = useMutation({
     mutationFn: async (content: string) => {
+      // Cancel any in-flight save (race condition guard)
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       const res = await fetch('/api/note', {
         method: 'POST',
         headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ content }),
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error('Failed to save');
       return res.json();

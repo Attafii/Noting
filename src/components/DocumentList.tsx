@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { bridgeHeaders } from '../lib/token';
+import { bridgeHeaders, getToken } from '../lib/token';
 
 interface Document {
   id: number;
@@ -52,7 +52,7 @@ export default function DocumentList() {
             <div className="text-xs text-zinc-500">{doc.file_type}</div>
           </div>
           <a
-            href={`/api/download?id=${doc.id}`}
+            href={`/api/download?id=${doc.id}&token=${getToken()}`}
             download={doc.file_name}
             className="inline-flex h-8 w-8 items-center justify-center text-zinc-500 hover:text-zinc-300 transition-colors"
           >
