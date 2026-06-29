@@ -80,17 +80,17 @@ Ship a working, stealth-themed personal bridge app: one endpoint URL with `?toke
 - `.gitignore` with `node_modules`, `.env`, `.sisyphus/evidence/`, etc.
 
 ### Definition of Done
-- [ ] `npm install && npm run dev` boots with no TS errors
-- [ ] `npm run build` completes successfully producing `dist/`
-- [ ] TanStack Router route tree auto-generated (`routeTree.gen.ts`)
-- [ ] All 5 `/api/*` endpoints return correct HTTP status + JSON/binary
-- [ ] Token capture wipes URL within 1 render cycle of root mount
-- [ ] Note editor debounces saves at 500ms, shows "Saved" indicator
-- [ ] "Format with NIM" button calls `/api/ai` and replaces textarea content
-- [ ] Drag-drop upload accepts files ≤4.5MB, rejects larger with 413 + UI indicator
-- [ ] Document list shows metadata rows, download button resolves with correct Content-Type + Content-Disposition
-- [ ] `curl` black-box tests against all 5 endpoints return expected responses
-- [ ] Playwright flow tests pass for token capture, note autosave, format button, upload, download
+- [x] `npm install && npm run dev` boots with no TS errors
+- [x] `npm run build` completes successfully producing `dist/`
+- [x] TanStack Router route tree auto-generated (`routeTree.gen.ts`)
+- [x] All 5 `/api/*` endpoints return correct HTTP status + JSON/binary
+- [x] Token capture wipes URL within 1 render cycle of root mount
+- [x] Note editor debounces saves at 500ms, shows "Saved" indicator
+- [x] "Format with NIM" button calls `/api/ai` and replaces textarea content
+- [x] Drag-drop upload accepts files ≤4.5MB, rejects larger with 413 + UI indicator
+- [x] Document list shows metadata rows, download button resolves with correct Content-Type + Content-Disposition
+- [x] `curl` black-box tests against all 5 endpoints return expected responses
+- [x] Playwright flow tests pass for token capture, note autosave, format button, upload, download
 
 ### Must Have
 - Zero-auth token model: `?token=` → localStorage → `x-bridge-token` header on every API call
@@ -1853,7 +1853,7 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
   - Files: `src/components/FileDropzone.tsx`, `src/components/DocumentList.tsx`
   - Pre-commit: `tsc --noEmit && npm run build`
 
-- [ ] 14. **Dashboard Integration (wire editor + file ecosystem into index.tsx)**
+- [x] 14. **Dashboard Integration (wire editor + file ecosystem into index.tsx)**
 
   **What to do**:
   - Edit `src/routes/index.tsx` (created in T11) to replace placeholder divs with real component imports:
@@ -1980,19 +1980,19 @@ Every executing agent (Wave 1-3) receives load_skills=`["ponytail", "design-tast
 
 ## Final Verification Wave (MANDATORY — after ALL implementation tasks)
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Read the plan end-to-end. For each "Must Have": verify implementation exists (read file, curl endpoint, run command). For each "Must NOT Have": search codebase for forbidden patterns — reject with file:line if found. Check evidence files exist in `.sisyphus/evidence/`. Compare deliverables against plan.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | Tasks [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   Run `tsc --noEmit` + `npm run build`. Review all changed files for: `as any`/`@ts-ignore`, empty catches, console.log in `/api/*`, commented-out code, unused imports. Check AI slop: excessive comments, over-abstraction, generic names. Verify no `lucide-react`, no ORM in `package.json`.
   Output: `Build [PASS/FAIL] | TS [PASS/FAIL] | Files [N clean/N issues] | VERDICT`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high` (+ `playwright` skill)
+- [x] F3. **Real Manual QA** — `unspecified-high` (+ `playwright` skill)
   Start from clean state. Execute EVERY QA scenario from EVERY task — follow exact steps, capture evidence. Test cross-task integration: token-wipe → load note → type → autosave → upload file → see in list → download → format note. Focus on: stealth factor (URL bar clean, page title generic), dark theme visual quality (screenshot), race conditions (rapid typing + save), oversized file rejection. Save to `.sisyphus/evidence/final-qa/`.
   Output: `Scenarios [N/N pass] | Integration [N/N] | Edge Cases [N tested] | VERDICT`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   For each task: read "What to do", read actual diff (git log/diff). Verify 1:1 — everything in spec was built (no missing), nothing beyond spec was built (no creep). Check "Must NOT do" compliance. Detect cross-task contamination (Task N touching Task M's files). Flag unaccounted changes.
   Output: `Tasks [N/N compliant] | Contamination [CLEAN/N issues] | Unaccounted [CLEAN/N files] | VERDICT`
 
@@ -2037,15 +2037,15 @@ curl -H "x-bridge-token: dev-test-token-123" localhost:5173/api/note
 ```
 
 ### Final Checklist
-- [ ] All "Must Have" present
-- [ ] All "Must NOT Have" absent
-- [ ] `npm run build` succeeds
-- [ ] All 5 `/api/*` endpoints reachable
-- [ ] URL wipe on token capture verified
-- [ ] 500ms debounce note save verified
-- [ ] 4.5MB upload rejection verified (413)
-- [ ] Download sets correct Content-Type + Content-Disposition
-- [ ] Format with NIM replaces editor content
-- [ ] `queryClient.invalidateQueries` fires after upload + format
-- [ ] Dark zinc-950 theme throughout
-- [ ] Page title is stealth generic
+- [x] All "Must Have" present
+- [x] All "Must NOT Have" absent
+- [x] `npm run build` succeeds
+- [x] All 5 `/api/*` endpoints reachable
+- [x] URL wipe on token capture verified
+- [x] 500ms debounce note save verified
+- [x] 4.5MB upload rejection verified (413)
+- [x] Download sets correct Content-Type + Content-Disposition
+- [x] Format with NIM replaces editor content
+- [x] `queryClient.invalidateQueries` fires after upload + format
+- [x] Dark zinc-950 theme throughout
+- [x] Page title is stealth generic
