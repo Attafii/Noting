@@ -1,15 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import busboy from 'busboy';
 import { validateToken, unauthorizedResponse } from './_auth';
-import { sql } from '../src/lib/db';
+import { enforceRateLimit } from './_ratelimit';
+import { getSql } from '../src/lib/db';
 
-export const config = { api: { bodyParser: false } };
+const MAX_BYTES = 4.5 * 1024 * 1024;
 
+/**
+ * NOTE: `export const config = { api: { bodyParser: false } }` is Next.js
+ * API-route syntax and has no effect on native Vercel serverless functions,
+ * which already receive the raw request stream. It was removed for that
+ * reason — busboy consumes `req` directly below.
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!validateToken(req)) {
     unauthorizedResponse(res);
     return;
   }
+  if (!enforceRateLimit(req, res, { limit: 30 })) return;
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -17,17 +25,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const contentLength = parseInt(req.headers['content-length'] ?? '0', 10);
-  if (contentLength > 4.5 * 1024 * 1024) {
+  if (contentLength > MAX_BYTES) {
     res.status(413).json({ error: 'File too large. Max 4.5MB.' });
     return;
   }
 
-  const bb = busboy({ headers: req.headers });
+  const bb = busboy({ headers: req.headers, limits: { files: 1, fileSize: MAX_BYTES } });
   let fileBuffer: Buffer | null = null;
   let fileName = '';
   let fileType = '';
-  let byteTally = 0;
   let hasFile = false;
+  let responded = false;
+
+  const fail = (status: number, message: string) => {
+    if (!responded && !res.headersSent) {
+      responded = true;
+      res.status(status).json({ error: message });
+    }
+  };
 
   bb.on('file', (fieldname, file, info) => {
     if (fieldname !== 'file') {
@@ -35,50 +50,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
     hasFile = true;
-    fileName = info.filename;
-    fileType = info.mimeType;
+    fileName = sanitizeFileName(info.filename || 'upload');
+    fileType = info.mimeType || 'application/octet-stream';
     const chunks: Buffer[] = [];
 
     file.on('data', (data: Buffer) => {
       chunks.push(data);
-      byteTally += data.length;
-      if (byteTally > 4.5 * 1024 * 1024) {
-        file.resume();
-        bb.emit('error', new Error('File too large'));
-      }
+    });
+
+    file.on('limit', () => {
+      file.resume();
+      fail(413, 'File too large. Max 4.5MB.');
     });
 
     file.on('end', () => {
-      fileBuffer = Buffer.concat(chunks);
+      if (!file.truncated) {
+        fileBuffer = Buffer.concat(chunks);
+      }
     });
   });
 
   bb.on('finish', async () => {
-    if (!hasFile || !fileBuffer) {
-      res.status(400).json({ error: 'No file uploaded' });
+    if (responded) return;
+    if (!hasFile || !fileBuffer || fileBuffer.length === 0) {
+      fail(400, 'No file uploaded');
       return;
     }
-    if (fileBuffer.length > 4.5 * 1024 * 1024) {
-      res.status(413).json({ error: 'File too large. Max 4.5MB.' });
+    if (fileBuffer.length > MAX_BYTES) {
+      fail(413, 'File too large. Max 4.5MB.');
       return;
     }
     try {
+      const sql = getSql();
       const rows = await sql.query(
-        'INSERT INTO documents (file_name, file_type, file_data) VALUES ($1, $2, $3) RETURNING id, file_name, file_type, uploaded_at',
-        [fileName, fileType, fileBuffer]
+        'INSERT INTO documents (file_name, file_type, file_data) VALUES ($1, $2, $3) RETURNING id, file_name, file_type, octet_length(file_data) AS file_size, uploaded_at',
+        [fileName, fileType, fileBuffer],
       );
+      responded = true;
       res.status(200).json(rows[0]);
     } catch (e) {
       console.error('upload error', e);
-      res.status(500).json({ error: 'Upload failed' });
+      fail(500, 'Upload failed');
     }
   });
 
   bb.on('error', () => {
-    if (!res.headersSent) {
-      res.status(413).json({ error: 'File too large. Max 4.5MB.' });
-    }
+    fail(413, 'File too large. Max 4.5MB.');
+  });
+
+  req.on('aborted', () => {
+    responded = true;
   });
 
   req.pipe(bb);
+}
+
+/** Strip path components and control characters from client-supplied names. */
+function sanitizeFileName(raw: string): string {
+  const base = raw.split(/[\\/]/).pop() ?? 'upload';
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base.replace(/[\x00-\x1F\x7F]/g, '').trim();
+  return cleaned.slice(0, 255) || 'upload';
 }

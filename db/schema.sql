@@ -20,5 +20,11 @@ CREATE TABLE documents (
     uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE note_revisions (
+    id SERIAL PRIMARY KEY,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed a single note row for the single-user bridge
 INSERT INTO notes (id, content) VALUES (1, '') ON CONFLICT (id) DO NOTHING;

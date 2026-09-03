@@ -1,4 +1,6 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router';
+import { MotionConfig } from 'motion/react';
+import { Toaster } from 'sonner';
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -14,8 +16,23 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
-    <div className="bg-zinc-950 min-h-screen text-zinc-100 font-sans antialiased">
-      <Outlet />
-    </div>
+    // Honor the OS reduced-motion preference across all animations.
+    <MotionConfig reducedMotion="user">
+      <div className="min-h-screen bg-zinc-950 font-sans text-zinc-100 antialiased">
+        <Outlet />
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          gap={8}
+          toastOptions={{
+            style: {
+              background: '#18181b',
+              border: '1px solid #3f3f46',
+              color: '#f4f4f5',
+            },
+          }}
+        />
+      </div>
+    </MotionConfig>
   );
 }

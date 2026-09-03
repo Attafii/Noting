@@ -1,14 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateToken, unauthorizedResponse } from './_auth';
+import { enforceRateLimit } from './_ratelimit';
 
 const NIM_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const SYSTEM_PROMPT = 'Clean, format, and structure this scratchpad note efficiently using clean markdown while preserving structural integrity.';
+const SYSTEM_PROMPT =
+  'Clean, format, and structure this scratchpad note efficiently using clean markdown while preserving structural integrity.';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!validateToken(req)) {
     unauthorizedResponse(res);
     return;
   }
+  // Tight budget: each call spends paid NVIDIA NIM quota.
+  if (!enforceRateLimit(req, res, { limit: 10 })) return;
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -21,6 +25,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  if (!process.env.NVIDIA_API_KEY) {
+    res.status(200).json({
+      formatted: text,
+      fallback: true,
+      warning: 'AI formatting is not configured — original text kept.',
+    });
+    return;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
@@ -28,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const response = await fetch(NIM_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
+        Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -45,24 +58,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     clearTimeout(timeout);
 
-    if (controller.signal.aborted) {
-      res.status(504).json({ error: 'NIM timeout' });
-      return;
-    }
-
     if (!response.ok) {
-      const status = response.status;
-      res.status(502).json({ error: `NIM upstream ${status}` });
+      console.error('AI endpoint upstream status', response.status);
+      res.status(200).json({
+        formatted: text,
+        fallback: true,
+        warning: 'AI formatting is temporarily unavailable — original text kept.',
+      });
       return;
     }
 
-    const body = await response.json() as {
+    const body = (await response.json()) as {
       choices?: [{ message?: { content?: string } }];
     };
     const formatted = body.choices?.[0]?.message?.content;
 
     if (!formatted) {
-      res.status(502).json({ error: 'NIM returned empty content' });
+      res.status(200).json({
+        formatted: text,
+        fallback: true,
+        warning: 'AI returned empty content — original text kept.',
+      });
       return;
     }
 
@@ -70,10 +86,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (e) {
     clearTimeout(timeout);
     if (e instanceof Error && e.name === 'AbortError') {
-      res.status(504).json({ error: 'NIM timeout' });
+      res.status(200).json({
+        formatted: text,
+        fallback: true,
+        warning: 'AI formatting timed out — original text kept.',
+      });
       return;
     }
     console.error('AI endpoint error', e);
-    res.status(500).json({ error: 'AI request failed' });
+    res.status(200).json({
+      formatted: text,
+      fallback: true,
+      warning: 'AI formatting failed — original text kept.',
+    });
   }
 }

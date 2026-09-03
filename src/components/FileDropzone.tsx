@@ -1,81 +1,215 @@
-import { useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { bridgeHeaders } from '../lib/token';
+import { useCallback, useRef, useState } from 'react';
+import { useDropzone } from 'react-dropzone';
+import { useQueryClient } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'motion/react';
+import { Check, FileUp, Loader2, TriangleAlert, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { ApiError, uploadFile } from '../lib/api';
+import { formatBytes } from '../lib/format';
+import { cn } from '../lib/utils';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
-export default function FileDropzone() {
+const MAX_BYTES = 4.5 * 1024 * 1024;
+
+interface QueueItem {
+  id: number;
+  name: string;
+  size: number;
+  progress: number;
+  status: 'uploading' | 'done' | 'error';
+  error?: string;
+}
+
+interface FileDropzoneProps {
+  onUnauthorized: () => void;
+}
+
+export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
   const queryClient = useQueryClient();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const idRef = useRef(0);
 
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: bridgeHeaders(),
-        body: fd,
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || 'Upload failed');
+  const patchItem = useCallback((id: number, patch: Partial<QueueItem>) => {
+    setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }, []);
+
+  const removeItem = useCallback((id: number) => {
+    setQueue((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const startUpload = useCallback(
+    (id: number, file: File) => {
+      void uploadFile(file, (progress) => patchItem(id, { progress })).then(
+        () => {
+          patchItem(id, { status: 'done', progress: 100 });
+          void queryClient.invalidateQueries({ queryKey: ['documents'] });
+          setTimeout(() => removeItem(id), 1800);
+        },
+        (err: unknown) => {
+          if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
+            removeItem(id);
+            onUnauthorized();
+            return;
+          }
+          const message = err instanceof Error ? err.message : 'Upload failed';
+          patchItem(id, { status: 'error', error: message });
+          toast.error(message);
+        },
+      );
+    },
+    [onUnauthorized, patchItem, queryClient, removeItem],
+  );
+
+  const onDrop = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        idRef.current += 1;
+        const id = idRef.current;
+        if (file.size > MAX_BYTES) {
+          setQueue((prev) => [
+            ...prev,
+            {
+              id,
+              name: file.name,
+              size: file.size,
+              progress: 0,
+              status: 'error',
+              error: `Too large — max ${formatBytes(MAX_BYTES)}`,
+            },
+          ]);
+          continue;
+        }
+        setQueue((prev) => [
+          ...prev,
+          { id, name: file.name, size: file.size, progress: 0, status: 'uploading' },
+        ]);
+        startUpload(id, file);
       }
-      return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['documents'] });
-      setError(null);
-    },
-    onError: (err) => {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setTimeout(() => setError(null), 3000);
-    },
+    [startUpload],
+  );
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    multiple: true,
   });
 
-  function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-    if (file.size > 4.5 * 1024 * 1024) {
-      setError('File too large (max 4.5MB)');
-      setTimeout(() => setError(null), 3000);
-      return;
-    }
-    upload.mutate(file);
-  }
-
   return (
-    <div
-      className="border-dashed border-2 border-zinc-800 rounded-xl flex flex-col items-center justify-center py-10 transition-colors duration-200 hover:border-zinc-600 cursor-pointer"
-      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleFiles(e.dataTransfer.files); }}
-      onClick={() => inputRef.current?.click()}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        className="hidden"
-        onChange={(e) => handleFiles(e.target.files)}
-      />
-      {upload.isPending ? (
-        <div className="flex flex-col items-center gap-2">
-          {/* Inline SVG spinner */}
-          <svg className="animate-spin h-6 w-6 text-zinc-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <span className="text-sm text-zinc-500">Uploading...</span>
-        </div>
-      ) : error ? (
-        <span className="text-sm text-red-400">{error}</span>
-      ) : (
-        <div className="flex flex-col items-center gap-2">
-          {/* Inline SVG upload icon */}
-          <svg className="h-6 w-6 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-          </svg>
-          <span className="text-sm text-zinc-500">Drop file or click to browse</span>
-        </div>
-      )}
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>upload</CardTitle>
+        <span className="font-mono text-[11px] text-zinc-600">
+          max {formatBytes(MAX_BYTES)} each
+        </span>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <motion.div
+          animate={isDragActive ? { scale: 1.01 } : { scale: 1 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+        >
+          <div
+            {...getRootProps()}
+            className={cn(
+              'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors duration-200',
+              isDragActive
+                ? 'border-accent-400/70 bg-accent-500/[0.06]'
+                : 'border-zinc-800 bg-zinc-950/40 hover:border-zinc-600 hover:bg-zinc-900/40',
+            )}
+          >
+            <input {...getInputProps()} aria-label="Upload files" />
+            <motion.span
+              animate={isDragActive ? { y: -3, scale: 1.08 } : { y: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+              className={cn(
+                'flex h-10 w-10 items-center justify-center rounded-full border transition-colors duration-200',
+                isDragActive
+                  ? 'border-accent-500/50 bg-accent-500/10 text-accent-300'
+                  : 'border-zinc-700/70 bg-zinc-900 text-zinc-400',
+              )}
+            >
+              <FileUp className="size-4" />
+            </motion.span>
+            <div>
+              <p className="text-sm text-zinc-300">
+                {isDragActive ? 'Drop files to upload' : 'Drop files or click to browse'}
+              </p>
+              <p className="mt-0.5 text-xs text-zinc-600">Multiple files upload in parallel</p>
+            </div>
+          </div>
+        </motion.div>
+
+        <AnimatePresence initial={false}>
+          {queue.length > 0 && (
+            <motion.ul
+              key="queue"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col gap-1.5 overflow-hidden"
+            >
+              <AnimatePresence initial={false}>
+                {queue.map((item) => (
+                  <motion.li
+                    key={item.id}
+                    layout
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: 24 }}
+                    transition={{ duration: 0.18 }}
+                    className={cn(
+                      'relative overflow-hidden rounded-lg border px-3 py-2',
+                      item.status === 'error'
+                        ? 'border-red-900/60 bg-red-950/30'
+                        : 'border-zinc-800/80 bg-zinc-900/60',
+                    )}
+                  >
+                    {item.status === 'uploading' && (
+                      <motion.span
+                        className="absolute inset-y-0 left-0 bg-accent-500/15"
+                        initial={false}
+                        animate={{ width: `${item.progress}%` }}
+                        transition={{ ease: 'easeOut', duration: 0.2 }}
+                      />
+                    )}
+                    <div className="relative flex items-center gap-2.5">
+                      <StatusIcon status={item.status} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-mono text-xs text-zinc-200">{item.name}</p>
+                        <p className="text-[11px] text-zinc-500">
+                          {item.status === 'error' ? (
+                            <span className="text-red-300">{item.error}</span>
+                          ) : item.status === 'done' ? (
+                            <span className="text-emerald-300">Uploaded</span>
+                          ) : (
+                            `${formatBytes(item.size)} · ${item.progress}%`
+                          )}
+                        </p>
+                      </div>
+                      {item.status !== 'uploading' && (
+                        <button
+                          onClick={() => removeItem(item.id)}
+                          aria-label={`Dismiss ${item.name}`}
+                          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </motion.li>
+                ))}
+              </AnimatePresence>
+            </motion.ul>
+          )}
+        </AnimatePresence>
+      </CardContent>
+    </Card>
   );
+}
+
+function StatusIcon({ status }: { status: QueueItem['status'] }) {
+  if (status === 'uploading')
+    return <Loader2 className="size-4 shrink-0 animate-spin text-accent-300" />;
+  if (status === 'done') return <Check className="size-4 shrink-0 text-emerald-400" />;
+  return <TriangleAlert className="size-4 shrink-0 text-red-300" />;
 }
