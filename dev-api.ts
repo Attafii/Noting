@@ -96,9 +96,29 @@ export function vercelApiBridge(): Plugin {
 
           await (handler as (req: unknown, res: unknown) => Promise<void>)(req, res);
           if (!res.writableEnded) {
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'No response from handler' }));
+            // Event-driven handlers (e.g. busboy in /api/upload) respond
+            // after the handler returns — wait for completion, don't 500.
+            await new Promise<void>((resolve) => {
+              let settled = false;
+              const done = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                res.off('finish', done);
+                res.off('close', done);
+                resolve();
+              };
+              const timer = setTimeout(() => {
+                if (!res.writableEnded && !res.headersSent) {
+                  res.statusCode = 500;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ error: 'No response from handler' }));
+                }
+                done();
+              }, 25000);
+              res.on('finish', done);
+              res.on('close', done);
+            });
           }
         } catch (err) {
           // API routes always answer JSON — never leak Vite's HTML error page

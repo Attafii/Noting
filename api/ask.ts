@@ -61,15 +61,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Encrypted and trashed documents are invisible here by construction.
     // The model filter keeps retrieval inside a single embedding space, so a
     // future model swap can't silently mix incomparable vectors.
-    const rows = await sql.query(
-      `SELECT c.content, d.id AS document_id, d.file_name, c.embedding <=> $1::vector AS distance
-       FROM document_chunks c
-       JOIN documents d ON d.id = c.document_id
-       WHERE d.deleted_at IS NULL AND d.enc = FALSE AND c.embedding IS NOT NULL AND c.model = $3
-       ORDER BY c.embedding <=> $1::vector
-       LIMIT $2`,
-      [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL],
-    );
+    let rows;
+    try {
+      rows = await sql.query(
+        `SELECT c.content, d.id AS document_id, d.file_name, c.embedding <=> $1::vector AS distance
+         FROM document_chunks c
+         JOIN documents d ON d.id = c.document_id
+         WHERE d.deleted_at IS NULL AND d.enc = FALSE AND c.embedding IS NOT NULL AND c.model = $3
+         ORDER BY c.embedding <=> $1::vector
+         LIMIT $2`,
+        [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL],
+      );
+    } catch (e) {
+      // Most commonly: the pgvector extension/table is missing in this
+      // database (search was never set up). Degrade to a warning, not a 500.
+      console.error('ask retrieval unavailable', e);
+      res.status(200).json({
+        answer: '',
+        sources: [],
+        fallback: true,
+        warning:
+          'Document search is not set up in this database (pgvector extension missing) — uploads still work, but Ask cannot search yet.',
+      });
+      return;
+    }
 
     if (rows.length === 0) {
       res.status(200).json({

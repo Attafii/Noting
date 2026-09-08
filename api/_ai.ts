@@ -7,7 +7,7 @@
 const OR_BASE = 'https://openrouter.ai/api/v1';
 const CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || 'meta-llama/llama-3.3-70b-instruct';
 /** Native 1024 dims — must match document_chunks.embedding. */
-export const EMBED_MODEL = process.env.OPENROUTER_EMBED_MODEL || 'mistralai/mistral-embed';
+export const EMBED_MODEL = process.env.OPENROUTER_EMBED_MODEL || 'baai/bge-m3';
 export const EMBED_DIMS = 1024;
 
 export function aiConfigured(): boolean {

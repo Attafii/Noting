@@ -37,6 +37,7 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
    - `psql $NEON_CONNECTION_STRING -f db/migrate-003.sql`
    - `psql $NEON_CONNECTION_STRING -f db/migrate-004.sql` (provider swap: drops stale NVIDIA-era chunks; re-upload files to re-index)
 4. Run: `npm run dev` → open `http://localhost:5173/?token=YOUR_TOKEN`
+   - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.
    - The token is captured into `localStorage` and wiped from the URL on first load.
 
 ## Scripts

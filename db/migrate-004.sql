@@ -1,4 +1,4 @@
--- Migration 004: OpenRouter embedding space (mistral-embed, 1024 dims)
+-- Migration 004: OpenRouter embedding space (baai/bge-m3, 1024 dims)
 -- Run once: psql $NEON_CONNECTION_STRING -f db/migrate-004.sql
 -- Safe to re-run.
 --
