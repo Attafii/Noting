@@ -2,11 +2,14 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { vercelApiBridge } from './dev-api';
 
 export default defineConfig({
   plugins: [
     react(),
     TanStackRouterVite(),
+    // Dev only (apply: 'serve'): runs the Vercel functions locally.
+    vercelApiBridge(),
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {

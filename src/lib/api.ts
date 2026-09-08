@@ -22,8 +22,26 @@ export class ApiError extends Error {
 }
 
 export interface NotePayload {
+  id: number;
+  title: string;
   content: string;
+  pinned: boolean;
+  archived: boolean;
+  /** True when the stored content is client-side ciphertext (E2E). */
+  enc: boolean;
   updated_at: string;
+  created_at: string;
+}
+
+export interface NoteSummary {
+  id: number;
+  title: string;
+  pinned: boolean;
+  archived: boolean;
+  enc: boolean;
+  updated_at: string;
+  created_at: string;
+  preview: string;
 }
 
 export interface NoteRevision {
@@ -38,7 +56,21 @@ export interface DocumentMeta {
   file_type: string;
   /** Bytes. Server derives it via octet_length — no schema migration needed. */
   file_size: number;
+  enc: boolean;
   uploaded_at: string;
+  deleted_at?: string | null;
+}
+
+export interface AskSource {
+  document_id: number;
+  file_name: string;
+}
+
+export interface AskResult {
+  answer: string;
+  sources: AskSource[];
+  fallback?: boolean;
+  warning?: string;
 }
 
 export interface FormatResult {
@@ -59,6 +91,24 @@ function errorFromBody(body: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Parse a JSON response, failing with a human-readable error when the backend
+ * answers with anything else (e.g. raw source or an HTML fallback page because
+ * the serverless functions aren't executing where the app is hosted).
+ */
+async function readJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  try {
+    return text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    throw new ApiError(
+      res.status,
+      'API did not return JSON — the backend may not be running. ' +
+        'Run `npm run dev` for local development, or deploy the Vercel functions.',
+    );
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -70,7 +120,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(401, 'Invalid or missing token');
   }
   if (res.status === 409 || res.status === 429 || !res.ok) {
-    const body = await res.json().catch(() => null);
+    const body = await readJson(res).catch(() => null);
     const err = new ApiError(res.status, errorFromBody(body, `Request failed (${res.status})`));
     if (res.status === 409) {
       const server = (body as { server?: NotePayload } | null)?.server;
@@ -78,27 +128,73 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw err;
   }
-  return (await res.json()) as T;
+  return (await readJson(res)) as T;
 }
 
-export function getNote(): Promise<NotePayload> {
-  return request<NotePayload>('/api/note');
+export function getNote(id = 1): Promise<NotePayload> {
+  return request<NotePayload>(`/api/note?id=${id}`);
 }
 
-export function listRevisions(): Promise<NoteRevision[]> {
-  return request<NoteRevision[]>('/api/revisions');
+export function listRevisions(noteId = 1): Promise<NoteRevision[]> {
+  return request<NoteRevision[]>(`/api/revisions?note_id=${noteId}`);
 }
 
-export function saveNote(
-  content: string,
-  signal?: AbortSignal,
-  baseUpdatedAt?: string | null,
-): Promise<NotePayload> {
+export interface SaveNoteInput {
+  id?: number;
+  content: string;
+  signal?: AbortSignal;
+  baseUpdatedAt?: string | null;
+  /** Marks stored content as client-side ciphertext. */
+  enc?: boolean;
+}
+
+export function saveNote(input: SaveNoteInput): Promise<NotePayload> {
+  const { id, content, signal, baseUpdatedAt, enc } = input;
   return request<NotePayload>('/api/note', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(baseUpdatedAt ? { content, base_updated_at: baseUpdatedAt } : { content }),
+    body: JSON.stringify({
+      id,
+      content,
+      base_updated_at: baseUpdatedAt ?? undefined,
+      enc: typeof enc === 'boolean' ? enc : undefined,
+    }),
     signal,
+  });
+}
+
+export function listNotes(): Promise<NoteSummary[]> {
+  return request<NoteSummary[]>('/api/notes');
+}
+
+export function createNote(title?: string): Promise<NotePayload> {
+  return request<NotePayload>('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function updateNote(
+  id: number,
+  patch: { title?: string; pinned?: boolean; archived?: boolean },
+): Promise<NotePayload> {
+  return request<NotePayload>('/api/notes', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...patch }),
+  });
+}
+
+export function deleteNote(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/notes?id=${id}`, { method: 'DELETE' });
+}
+
+export function askQuestion(question: string): Promise<AskResult> {
+  return request<AskResult>('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
   });
 }
 
@@ -114,8 +210,23 @@ export function listDocuments(): Promise<DocumentMeta[]> {
   return request<DocumentMeta[]>('/api/documents');
 }
 
-export function deleteDocument(id: number): Promise<{ ok: true }> {
-  return request<{ ok: true }>(`/api/documents?id=${id}`, { method: 'DELETE' });
+export function listTrash(): Promise<DocumentMeta[]> {
+  return request<DocumentMeta[]>('/api/documents?trash=1');
+}
+
+export function restoreDocument(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, action: 'restore' }),
+  });
+}
+
+export function deleteDocument(id: number, permanent = false): Promise<{ ok: true }> {
+  return request<{ ok: true }>(
+    permanent ? `/api/documents?id=${id}&permanent=1` : `/api/documents?id=${id}`,
+    { method: 'DELETE' },
+  );
 }
 
 /**
@@ -125,6 +236,7 @@ export function deleteDocument(id: number): Promise<{ ok: true }> {
 export function uploadFile(
   file: File,
   onProgress?: (percent: number) => void,
+  encrypted = false,
 ): Promise<DocumentMeta> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -162,12 +274,20 @@ export function uploadFile(
 
     const form = new FormData();
     form.append('file', file);
+    if (encrypted) form.append('enc', '1');
     xhr.send(form);
   });
 }
 
-/** Download via authed fetch → blob, so the token never lands in history/logs. */
-export async function downloadDocument(id: number, fileName: string): Promise<void> {
+export interface FetchedDocument {
+  blob: Blob;
+  fileName: string;
+  fileType: string;
+  enc: boolean;
+}
+
+/** Authed fetch → blob, so the token never lands in history/logs. */
+export async function fetchDocumentBlob(id: number): Promise<FetchedDocument> {
   let res: Response;
   try {
     res = await fetch(`/api/download?id=${id}`, { headers: bridgeHeaders() });
@@ -179,7 +299,28 @@ export async function downloadDocument(id: number, fileName: string): Promise<vo
     const body = await res.json().catch(() => null);
     throw new ApiError(res.status, errorFromBody(body, 'Download failed'));
   }
-  const blob = await res.blob();
+  const rawName = res.headers.get('x-file-name') ?? `document-${id}`;
+  let fileName = rawName;
+  try {
+    fileName = decodeURIComponent(rawName);
+  } catch {
+    /* keep the raw value */
+  }
+  return {
+    blob: await res.blob(),
+    fileName,
+    fileType: res.headers.get('x-file-type') ?? 'application/octet-stream',
+    enc: res.headers.get('x-enc') === '1',
+  };
+}
+
+/** Download via authed fetch → blob, so the token never lands in history/logs. */
+export async function downloadDocument(id: number, fileName: string): Promise<void> {
+  const { blob } = await fetchDocumentBlob(id);
+  triggerBlobDownload(blob, fileName);
+}
+
+export function triggerBlobDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

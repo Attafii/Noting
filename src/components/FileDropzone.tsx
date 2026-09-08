@@ -2,9 +2,11 @@ import { useCallback, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, FileUp, Loader2, TriangleAlert, X } from 'lucide-react';
+import { Check, FileUp, Loader2, Lock, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, uploadFile } from '../lib/api';
+import { encryptBytes, toBufferView } from '../lib/crypto';
+import { getCryptoKey, useE2E } from '../lib/e2e';
 import { formatBytes } from '../lib/format';
 import { cn } from '../lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -28,6 +30,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
   const queryClient = useQueryClient();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const idRef = useRef(0);
+  const e2e = useE2E();
 
   const patchItem = useCallback((id: number, patch: Partial<QueueItem>) => {
     setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -39,13 +42,32 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
 
   const startUpload = useCallback(
     (id: number, file: File) => {
-      void uploadFile(file, (progress) => patchItem(id, { progress })).then(
-        () => {
-          patchItem(id, { status: 'done', progress: 100 });
-          void queryClient.invalidateQueries({ queryKey: ['documents'] });
-          setTimeout(() => removeItem(id), 1800);
-        },
-        (err: unknown) => {
+      void (async () => {
+        // E2E: encrypt bytes in-browser; the server stores opaque ciphertext
+        // under the original name and MIME type.
+        let payload = file;
+        let encrypted = false;
+        if (e2e) {
+          const key = await getCryptoKey();
+          if (!key) {
+            patchItem(id, { status: 'error', error: 'No encryption key — re-enter token' });
+            return;
+          }
+          try {
+            const plain = new Uint8Array(await file.arrayBuffer());
+            const cipher = await encryptBytes(key, plain);
+            payload = new File([toBufferView(cipher)], file.name, {
+              type: file.type || 'application/octet-stream',
+            });
+            encrypted = true;
+          } catch {
+            patchItem(id, { status: 'error', error: 'Encryption failed' });
+            return;
+          }
+        }
+        try {
+          await uploadFile(payload, (progress) => patchItem(id, { progress }), encrypted);
+        } catch (err: unknown) {
           if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
             removeItem(id);
             onUnauthorized();
@@ -54,10 +76,14 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
           const message = err instanceof Error ? err.message : 'Upload failed';
           patchItem(id, { status: 'error', error: message });
           toast.error(message);
-        },
-      );
+          return;
+        }
+        patchItem(id, { status: 'done', progress: 100 });
+        void queryClient.invalidateQueries({ queryKey: ['documents'] });
+        setTimeout(() => removeItem(id), 1800);
+      })();
     },
-    [onUnauthorized, patchItem, queryClient, removeItem],
+    [e2e, onUnauthorized, patchItem, queryClient, removeItem],
   );
 
   const onDrop = useCallback(
@@ -98,8 +124,9 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
     <Card>
       <CardHeader>
         <CardTitle>upload</CardTitle>
-        <span className="font-mono text-[11px] text-zinc-600">
-          max {formatBytes(MAX_BYTES)} each
+        <span className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-600">
+          {e2e && <Lock className="size-3 text-accent-300" />}
+          max {formatBytes(MAX_BYTES)} each{e2e ? ' · encrypted' : ''}
         </span>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">

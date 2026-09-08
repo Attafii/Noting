@@ -17,8 +17,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const sql = getSql();
+    const rawId = req.query?.note_id;
+    const noteId =
+      typeof rawId === 'string' && !Number.isNaN(parseInt(rawId, 10)) ? parseInt(rawId, 10) : 1;
     const rows = await sql.query(
-      'SELECT id, content, created_at FROM note_revisions ORDER BY id DESC LIMIT 20',
+      'SELECT id, content, created_at FROM note_revisions WHERE note_id = $1 ORDER BY id DESC LIMIT 20',
+      [noteId],
     );
     res.status(200).json(rows);
   } catch (e) {

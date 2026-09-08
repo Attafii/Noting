@@ -13,6 +13,9 @@ export const SHORTCUT_EVENTS = {
   togglePreview: 'noting:toggle-preview',
   toggleHistory: 'noting:toggle-history',
   focusSearch: 'noting:focus-search',
+  previewDocument: 'noting:preview-document',
+  openPalette: 'noting:open-palette',
+  sideTab: 'noting:side-tab',
 } as const;
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -39,6 +42,11 @@ export function useGlobalShortcuts() {
       if (mod && event.key.toLowerCase() === 'h') {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.toggleHistory));
+        return;
+      }
+      if (mod && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.openPalette));
         return;
       }
       if (event.key === '/' && !mod && !isTypingTarget(event.target)) {

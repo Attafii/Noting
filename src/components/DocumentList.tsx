@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArchiveRestore,
   Check,
   Download,
+  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -11,6 +13,7 @@ import {
   FileText,
   FileVideo,
   Loader2,
+  Lock,
   PackageOpen,
   Search,
   Trash2,
@@ -22,13 +25,19 @@ import { toast } from 'sonner';
 import {
   ApiError,
   deleteDocument,
-  downloadDocument,
+  fetchDocumentBlob,
   listDocuments,
+  listTrash,
+  restoreDocument,
+  triggerBlobDownload,
   type DocumentMeta,
 } from '../lib/api';
+import { decryptBytes, toBufferView } from '../lib/crypto';
+import { getCryptoKey } from '../lib/e2e';
 import { formatBytes, timeAgo } from '../lib/format';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
+import { PreviewModal } from './PreviewModal';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -56,29 +65,32 @@ function iconForMime(mime: string): LucideIcon {
 
 export default function DocumentList({ onUnauthorized }: DocumentListProps) {
   const queryClient = useQueryClient();
+  const [view, setView] = useState<'files' | 'trash'>('files');
   const [search, setSearch] = useState('');
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<DocumentMeta | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Global "/" shortcut focuses search.
-  useEffect(() => {
-    const focus = () => searchRef.current?.focus();
-    window.addEventListener(SHORTCUT_EVENTS.focusSearch, focus);
-    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, focus);
-  }, []);
-
-  const docsQuery = useQuery({
+  const filesQuery = useQuery({
     queryKey: ['documents'],
     queryFn: listDocuments,
     retry: false,
   });
+  const trashQuery = useQuery({
+    queryKey: ['trash'],
+    queryFn: listTrash,
+    retry: false,
+    enabled: view === 'trash',
+  });
+
+  const activeQuery = view === 'files' ? filesQuery : trashQuery;
 
   useEffect(() => {
-    if (docsQuery.error instanceof ApiError && docsQuery.error.code === 'UNAUTHORIZED') {
+    if (activeQuery.error instanceof ApiError && activeQuery.error.code === 'UNAUTHORIZED') {
       onUnauthorized();
     }
-  }, [docsQuery.error, onUnauthorized]);
+  }, [activeQuery.error, onUnauthorized]);
 
   // Reset the delete confirmation if it sits untouched.
   useEffect(() => {
@@ -87,29 +99,89 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
     return () => clearTimeout(timer);
   }, [confirmId]);
 
-  const remove = useMutation({
-    mutationFn: deleteDocument,
+  // External preview requests (e.g. citation chips in the Ask panel).
+  useEffect(() => {
+    const open = (event: Event) => {
+      const id = (event as CustomEvent<number>).detail;
+      const cached = queryClient.getQueryData<DocumentMeta[]>(['documents']) ?? [];
+      const found = cached.find((doc) => doc.id === id);
+      if (found) {
+        setView('files');
+        setPreviewDoc(found);
+      }
+    };
+    window.addEventListener(SHORTCUT_EVENTS.previewDocument, open);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.previewDocument, open);
+  }, [queryClient]);
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['documents'] });
+    void queryClient.invalidateQueries({ queryKey: ['trash'] });
+  };
+
+  const setCacheRemove = (id: number) => {
+    queryClient.setQueryData<DocumentMeta[]>(['documents'], (prev) =>
+      prev ? prev.filter((doc) => doc.id !== id) : prev,
+    );
+    queryClient.setQueryData<DocumentMeta[]>(['trash'], (prev) =>
+      prev ? prev.filter((doc) => doc.id !== id) : prev,
+    );
+  };
+
+  const trash = useMutation({
+    mutationFn: (id: number) => deleteDocument(id, false),
+    onSuccess: (_data, id) => {
+      setCacheRemove(id);
+      refresh();
+      toast.success('Moved to trash', {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            restoreDocument(id).then(refresh, () => toast.error('Restore failed'));
+          },
+        },
+      });
+    },
+    onError: (err) => handleMutationError(err, onUnauthorized, 'Delete failed'),
+  });
+
+  const destroy = useMutation({
+    mutationFn: (id: number) => deleteDocument(id, true),
     onSuccess: (_data, id) => {
       setConfirmId(null);
-      queryClient.setQueryData<DocumentMeta[]>(['documents'], (prev) =>
-        prev ? prev.filter((doc) => doc.id !== id) : prev,
-      );
-      toast.success('Document deleted');
+      setCacheRemove(id);
+      refresh();
+      toast.success('Permanently deleted');
     },
-    onError: (err) => {
-      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
-        onUnauthorized();
-        return;
-      }
-      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    onError: (err) => handleMutationError(err, onUnauthorized, 'Delete failed'),
+  });
+
+  const restore = useMutation({
+    mutationFn: restoreDocument,
+    onSuccess: (_data, id) => {
+      setCacheRemove(id);
+      refresh();
+      toast.success('Restored');
     },
+    onError: (err) => handleMutationError(err, onUnauthorized, 'Restore failed'),
   });
 
   async function handleDownload(doc: DocumentMeta) {
     if (busyIds.has(doc.id)) return;
     setBusyIds((prev) => new Set(prev).add(doc.id));
     try {
-      await downloadDocument(doc.id, doc.file_name);
+      const fetched = await fetchDocumentBlob(doc.id);
+      let blob = fetched.blob;
+      if (fetched.enc) {
+        const key = await getCryptoKey();
+        if (!key) throw new Error('No encryption key — re-enter your token');
+        const cipher = new Uint8Array(await fetched.blob.arrayBuffer());
+        blob = new Blob([toBufferView(await decryptBytes(key, cipher))], {
+          type: fetched.fileType,
+        });
+      }
+      triggerBlobDownload(blob, fetched.fileName);
+      toast.success('Download started');
     } catch (err) {
       if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
         onUnauthorized();
@@ -125,23 +197,37 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
     }
   }
 
-  const docs = docsQuery.data ?? [];
+  async function decryptForPreview(data: Uint8Array): Promise<Uint8Array> {
+    const key = await getCryptoKey();
+    if (!key) throw new Error('No encryption key — re-enter your token');
+    return decryptBytes(key, data);
+  }
+
+  const docs = activeQuery.data ?? [];
   const query = search.trim().toLowerCase();
   const filtered = query ? docs.filter((d) => d.file_name.toLowerCase().includes(query)) : docs;
+  const trashCount = trashQuery.data?.length ?? 0;
 
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
       <CardHeader>
         <CardTitle>documents</CardTitle>
-        {docs.length > 0 && (
-          <span className="rounded-full border border-zinc-700/70 bg-zinc-800/60 px-2 py-0.5 font-mono text-[11px] text-zinc-400">
-            {docs.length}
-          </span>
-        )}
+        <div
+          role="tablist"
+          aria-label="Document view"
+          className="flex rounded-lg border border-zinc-800 bg-zinc-950/70 p-0.5"
+        >
+          <ViewTab active={view === 'files'} onClick={() => setView('files')} label="Files" />
+          <ViewTab
+            active={view === 'trash'}
+            onClick={() => setView('trash')}
+            label={trashCount > 0 ? `Trash (${trashCount})` : 'Trash'}
+          />
+        </div>
       </CardHeader>
 
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5">
-        {(docs.length > 0 || docsQuery.isPending) && (
+        {(docs.length > 0 || activeQuery.isPending) && (
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-zinc-600" />
             <Input
@@ -155,7 +241,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
           </div>
         )}
 
-        {docsQuery.isPending && (
+        {activeQuery.isPending && (
           <div className="flex flex-col gap-2" aria-label="Loading documents">
             {[0, 1, 2].map((i) => (
               <div
@@ -173,7 +259,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
           </div>
         )}
 
-        {docsQuery.isError && (
+        {activeQuery.isError && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-red-900/50 bg-red-950/20 px-4 py-10 text-center">
             <span className="flex h-10 w-10 items-center justify-center rounded-full border border-red-900/70 bg-red-950/50 text-red-300">
               <TriangleAlert className="size-4" />
@@ -181,28 +267,32 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
             <div>
               <p className="text-sm font-medium text-zinc-200">Couldn&apos;t load documents</p>
               <p className="mt-1 text-xs text-zinc-500">
-                {docsQuery.error instanceof Error
-                  ? docsQuery.error.message
+                {activeQuery.error instanceof Error
+                  ? activeQuery.error.message
                   : 'Something went wrong'}
               </p>
             </div>
-            <Button onClick={() => docsQuery.refetch()}>Try again</Button>
+            <Button onClick={() => activeQuery.refetch()}>Try again</Button>
           </div>
         )}
 
-        {docsQuery.isSuccess && docs.length === 0 && (
+        {activeQuery.isSuccess && docs.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center">
             <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-500">
               <PackageOpen className="size-4" />
             </span>
-            <p className="text-sm text-zinc-400">No documents yet</p>
+            <p className="text-sm text-zinc-400">
+              {view === 'files' ? 'No documents yet' : 'Trash is empty'}
+            </p>
             <p className="max-w-[220px] text-xs text-zinc-600">
-              Drop a file above to sync it to your other devices.
+              {view === 'files'
+                ? 'Drop a file above to sync it to your other devices.'
+                : 'Deleted files rest here for 30 days.'}
             </p>
           </div>
         )}
 
-        {docsQuery.isSuccess && docs.length > 0 && filtered.length === 0 && (
+        {activeQuery.isSuccess && docs.length > 0 && filtered.length === 0 && (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center">
             <p className="text-sm text-zinc-400">No files match “{search.trim()}”</p>
             <button
@@ -221,7 +311,10 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                 const Icon = iconForMime(doc.file_type);
                 const busy = busyIds.has(doc.id);
                 const confirming = confirmId === doc.id;
-                const deleting = remove.isPending && remove.variables === doc.id;
+                const working =
+                  (trash.isPending && trash.variables === doc.id) ||
+                  (destroy.isPending && destroy.variables === doc.id) ||
+                  (restore.isPending && restore.variables === doc.id);
                 return (
                   <motion.li
                     key={doc.id}
@@ -242,38 +335,73 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                     </span>
                     <div className="min-w-0 flex-1">
                       <p
-                        className="truncate font-mono text-[13px] text-zinc-200"
+                        className="flex items-center gap-1.5 truncate font-mono text-[13px] text-zinc-200"
                         title={doc.file_name}
                       >
-                        {doc.file_name}
+                        <span className="truncate">{doc.file_name}</span>
+                        {doc.enc && <Lock className="size-3 shrink-0 text-accent-300" />}
                       </p>
                       <p className="truncate text-[11px] text-zinc-500">
-                        {formatBytes(Number(doc.file_size) || 0)} · {timeAgo(doc.uploaded_at)}
+                        {formatBytes(Number(doc.file_size) || 0)} ·{' '}
+                        {view === 'trash' && doc.deleted_at
+                          ? `deleted ${timeAgo(doc.deleted_at)}`
+                          : timeAgo(doc.uploaded_at)}
                       </p>
                     </div>
-                    {confirming ? (
-                      <span className="flex shrink-0 items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          disabled={deleting}
-                          onClick={() => remove.mutate(doc.id)}
-                          title="Confirm delete"
-                        >
-                          {deleting ? <Loader2 className="animate-spin" /> : <Check />}
-                          Delete
-                        </Button>
+                    {view === 'trash' ? (
+                      confirming ? (
+                        <span className="flex shrink-0 items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={working}
+                            onClick={() => destroy.mutate(doc.id)}
+                            title="Delete forever"
+                          >
+                            {working ? <Loader2 className="animate-spin" /> : <Check />}
+                            Forever
+                          </Button>
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => setConfirmId(null)}
+                            title="Cancel"
+                          >
+                            <X />
+                          </Button>
+                        </span>
+                      ) : (
+                        <span className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => restore.mutate(doc.id)}
+                            disabled={working}
+                            title={`Restore ${doc.file_name}`}
+                          >
+                            {working ? <Loader2 className="animate-spin" /> : <ArchiveRestore />}
+                          </Button>
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => setConfirmId(doc.id)}
+                            title={`Delete ${doc.file_name} forever`}
+                            className="hover:bg-red-950/50 hover:text-red-300"
+                          >
+                            <Trash2 />
+                          </Button>
+                        </span>
+                      )
+                    ) : (
+                      <span className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          onClick={() => setConfirmId(null)}
-                          title="Cancel"
+                          onClick={() => setPreviewDoc(doc)}
+                          title={`Preview ${doc.file_name}`}
                         >
-                          <X />
+                          <Eye />
                         </Button>
-                      </span>
-                    ) : (
-                      <span className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                         <Button
                           size="icon-sm"
                           variant="ghost"
@@ -286,11 +414,12 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          onClick={() => setConfirmId(doc.id)}
-                          title={`Delete ${doc.file_name}`}
+                          onClick={() => trash.mutate(doc.id)}
+                          disabled={working}
+                          title={`Move ${doc.file_name} to trash`}
                           className="hover:bg-red-950/50 hover:text-red-300"
                         >
-                          <Trash2 />
+                          {working ? <Loader2 className="animate-spin" /> : <Trash2 />}
                         </Button>
                       </span>
                     )}
@@ -301,6 +430,46 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
           </motion.ul>
         )}
       </CardContent>
+
+      <PreviewModal
+        key={previewDoc?.id ?? 'closed'}
+        doc={previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        onUnauthorized={onUnauthorized}
+        decrypt={decryptForPreview}
+      />
     </Card>
+  );
+}
+
+function handleMutationError(err: unknown, onUnauthorized: () => void, fallback: string) {
+  if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
+    onUnauthorized();
+    return;
+  }
+  toast.error(err instanceof Error ? err.message : fallback);
+}
+
+function ViewTab({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-200',
+        active ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300',
+      )}
+    >
+      {label}
+    </button>
   );
 }

@@ -3,3 +3,4 @@ node_modules
 .sisyphus
 src/routeTree.gen.ts
 package-lock.json
+.env.example

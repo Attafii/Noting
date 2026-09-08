@@ -3,6 +3,9 @@ import { validateToken, unauthorizedResponse } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 
+const ACTIVE_COLUMNS =
+  'id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at';
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!validateToken(req)) {
     unauthorizedResponse(res);
@@ -12,10 +15,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const sql = getSql();
 
+  // Trash view: trashed docs + lazy purge of anything older than 30 days.
+  if (req.method === 'GET' && req.query?.trash === '1') {
+    try {
+      await sql.query(
+        "DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'",
+      );
+      const rows = await sql.query(
+        `SELECT ${ACTIVE_COLUMNS}, deleted_at FROM documents WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
+      );
+      res.status(200).json(rows);
+    } catch (e) {
+      console.error('documents trash error', e);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+    return;
+  }
+
   if (req.method === 'GET') {
     try {
       const rows = await sql.query(
-        'SELECT id, file_name, file_type, octet_length(file_data) AS file_size, uploaded_at FROM documents ORDER BY uploaded_at DESC',
+        `SELECT ${ACTIVE_COLUMNS} FROM documents WHERE deleted_at IS NULL ORDER BY uploaded_at DESC`,
       );
       res.status(200).json(rows);
     } catch (e) {
@@ -25,18 +45,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  if (req.method === 'POST') {
+    // Restore action: { id, action: 'restore' }.
+    const { id, action } = (req.body ?? {}) as { id?: number; action?: string };
+    if (action !== 'restore' || typeof id !== 'number' || !Number.isInteger(id)) {
+      res.status(400).json({ error: 'Expected { id, action: "restore" }' });
+      return;
+    }
+    try {
+      const rows = await sql.query(
+        'UPDATE documents SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id',
+        [id],
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Document not found in trash' });
+        return;
+      }
+      res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error('documents restore error', e);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+    return;
+  }
+
   if (req.method === 'DELETE') {
-    const id = req.query?.id;
-    const parsed = typeof id === 'string' ? parseInt(id, 10) : NaN;
-    if (!id || Number.isNaN(parsed)) {
+    const id = parseId(req.query?.id);
+    if (id === null) {
       res.status(400).json({ error: 'Missing id query parameter' });
       return;
     }
     try {
-      const rows = await sql.query('DELETE FROM documents WHERE id = $1 RETURNING id', [parsed]);
-      if (rows.length === 0) {
-        res.status(404).json({ error: 'Document not found' });
-        return;
+      if (req.query?.permanent === '1') {
+        // Hard delete; chunks cascade via FK.
+        const rows = await sql.query('DELETE FROM documents WHERE id = $1 RETURNING id', [id]);
+        if (rows.length === 0) {
+          res.status(404).json({ error: 'Document not found' });
+          return;
+        }
+      } else {
+        const rows = await sql.query(
+          'UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+          [id],
+        );
+        if (rows.length === 0) {
+          res.status(404).json({ error: 'Document not found' });
+          return;
+        }
       }
       res.status(200).json({ ok: true });
     } catch (e) {
@@ -47,4 +102,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.status(405).json({ error: 'Method not allowed' });
+}
+
+function parseId(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
 }

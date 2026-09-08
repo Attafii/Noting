@@ -37,7 +37,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Support token from header OR query param (for legacy <a href> downloads).
   // The UI downloads via authed fetch → blob, so the token stays out of URLs.
   const queryToken = req.query?.token;
-  if (!validateToken(req) && queryToken !== process.env.GLOBAL_SECRET_TOKEN) {
+  const expected = process.env.GLOBAL_SECRET_TOKEN;
+  const queryValid =
+    typeof queryToken === 'string' &&
+    queryToken.length > 0 &&
+    typeof expected === 'string' &&
+    expected.length > 0 &&
+    queryToken === expected;
+  if (!validateToken(req) && !queryValid) {
     unauthorizedResponse(res);
     return;
   }
@@ -58,7 +65,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const rows = await sql.query(
-      'SELECT file_name, file_type, file_data FROM documents WHERE id = $1',
+      'SELECT file_name, file_type, file_data, enc FROM documents WHERE id = $1 AND deleted_at IS NULL',
       [parseInt(id as string, 10)],
     );
     if (rows.length === 0) {
@@ -77,9 +84,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const fileName = rows[0].file_name as string;
     const fileType = (rows[0].file_type as string) || 'application/octet-stream';
+    const enc = rows[0].enc ? '1' : '0';
 
     res.setHeader('Content-Type', fileType);
     res.setHeader('Content-Length', buffer.length);
+    // Machine-readable metadata for the fetch-based client (RFC 5987 for Unicode).
+    res.setHeader('x-file-name', encodeRFC5987(fileName));
+    res.setHeader('x-file-type', fileType);
+    res.setHeader('x-enc', enc);
 
     // ASCII-safe filename for basic compatibility
     // eslint-disable-next-line no-control-regex

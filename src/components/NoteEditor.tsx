@@ -6,6 +6,7 @@ import {
   Copy,
   History,
   Loader2,
+  Lock,
   PencilLine,
   ScanEye,
   Sparkles,
@@ -16,6 +17,7 @@ import {
   ApiError,
   formatNoteText,
   getNote,
+  listNotes,
   listRevisions,
   saveNote,
   type NotePayload,
@@ -24,9 +26,12 @@ import {
 import { countWords, timeAgo } from '../lib/format';
 import { setSaveState } from '../lib/save-status';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
+import { decryptText, encryptText } from '../lib/crypto';
+import { getCryptoKey, useE2E } from '../lib/e2e';
 import { cn } from '../lib/utils';
 import { ConflictDialog } from './ConflictDialog';
 import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Skeleton } from './ui/skeleton';
 
@@ -66,10 +71,11 @@ function clearPending() {
 }
 
 interface NoteEditorProps {
+  noteId: number;
   onUnauthorized: () => void;
 }
 
-export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
+export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) {
   const queryClient = useQueryClient();
   const [text, setText] = useState('');
   const [preview, setPreview] = useState(false);
@@ -79,40 +85,94 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
   /** First-load adoption state; null until server data arrives (replaces an init flag). */
   const [loadState, setLoadState] = useState<{ anchor: string; restored: boolean } | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const e2e = useE2E();
   /** The `updated_at` this client based its edits on — the conflict-detection anchor. */
   const baseRef = useRef<string | null>(null);
   /** Readiness + latest-text mirrors for event-listener callbacks. Synced in an effect below. */
   const readyRef = useRef(false);
   const textRef = useRef(text);
   const conflictRef = useRef(conflict);
+  /** Whether saves must store ciphertext (note is enc, or E2E just turned on). */
+  const encRef = useRef(false);
 
   const noteQuery = useQuery({
-    queryKey: ['note'],
-    queryFn: getNote,
+    queryKey: ['note', noteId],
+    queryFn: () => getNote(noteId),
     retry: false,
   });
 
+  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
+
+  const noteEnc = noteQuery.data?.enc ?? false;
+
   const revisionsQuery = useQuery({
-    queryKey: ['revisions'],
-    queryFn: listRevisions,
+    queryKey: ['revisions', noteId],
+    queryFn: () => listRevisions(noteId),
     retry: false,
     enabled: historyOpen,
     staleTime: 30_000,
   });
+
+  // History entries of encrypted notes are ciphertext server-side — decrypt
+  // for display. Failures degrade to a placeholder per entry, never a crash.
+  const revisionTextsQuery = useQuery({
+    queryKey: [
+      'revision-texts',
+      noteId,
+      (revisionsQuery.data ?? []).map((revision) => revision.id).join(','),
+    ],
+    queryFn: async () => {
+      const items = revisionsQuery.data ?? [];
+      if (!noteEnc) return items;
+      const key = await getCryptoKey();
+      if (!key) throw new Error('No encryption key available');
+      return Promise.all(
+        items.map(async (revision) => {
+          try {
+            return { ...revision, content: await decryptText(key, revision.content) };
+          } catch {
+            return { ...revision, content: '[Could not decrypt this version]' };
+          }
+        }),
+      );
+    },
+    enabled: historyOpen && revisionsQuery.isSuccess,
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const visibleRevisions = revisionTextsQuery.data ?? (noteEnc ? [] : (revisionsQuery.data ?? []));
 
   // Keep listener mirrors fresh (ref writes belong in effects, not render).
   useEffect(() => {
     readyRef.current = loadState !== null;
     textRef.current = text;
     conflictRef.current = conflict;
+    encRef.current = noteEnc || e2e;
+  });
+
+  // Decrypt-after-load for E2E notes. Plaintext notes resolve immediately;
+  // ciphertext needs the token-derived key (failure = token mismatch).
+  const decryptedQuery = useQuery({
+    queryKey: ['note-text', noteId, noteQuery.data?.updated_at ?? 'pending'],
+    queryFn: async () => {
+      const raw = noteQuery.data?.content ?? '';
+      if (!noteQuery.data?.enc) return raw;
+      const key = await getCryptoKey();
+      if (!key) throw new Error('No encryption key available');
+      return decryptText(key, raw);
+    },
+    enabled: !!noteQuery.data && loadState === null,
+    retry: false,
+    staleTime: Infinity,
   });
 
   // Adopt the server version on first arrival. This is a guarded render-time
   // adjustment (the sanctioned pattern for init-on-load): it runs once because
   // setLoadState flips the guard, and every write here is idempotent.
   // Refs and toasts stay out of render — the effect below applies them.
-  if (noteQuery.data && loadState === null) {
-    const serverText = noteQuery.data.content ?? '';
+  if (noteQuery.data && loadState === null && decryptedQuery.data !== undefined) {
+    const serverText = decryptedQuery.data;
     const pending = readPending();
     const adopted = pending !== null && pending !== serverText;
     setLoadState({ anchor: noteQuery.data.updated_at ?? '', restored: adopted });
@@ -144,13 +204,27 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
   const abortRef = useRef<AbortController | null>(null);
 
   const save = useMutation({
-    mutationFn: async (content: string) => {
+    mutationFn: async (input: { content: string }) => {
       // Cancel any in-flight save so rapid keystrokes can't reorder writes.
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        return await saveNote(content, controller.signal, baseRef.current);
+        // E2E: ciphertext goes over the wire when the note is (or becomes) encrypted.
+        let content = input.content;
+        const enc = encRef.current;
+        if (enc) {
+          const key = await getCryptoKey();
+          if (!key) throw new Error('No encryption key available — re-enter your token');
+          content = await encryptText(key, input.content);
+        }
+        return await saveNote({
+          id: noteId,
+          content,
+          signal: controller.signal,
+          baseUpdatedAt: baseRef.current,
+          enc,
+        });
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
       }
@@ -161,11 +235,12 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
     onSuccess: (data) => {
       baseRef.current = data.updated_at;
       setSaveState('saved', data.updated_at);
-      queryClient.setQueryData(['note'], data);
+      queryClient.setQueryData(['note', noteId], data);
       clearPending();
-      void queryClient.invalidateQueries({ queryKey: ['revisions'] });
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      void queryClient.invalidateQueries({ queryKey: ['revisions', noteId] });
     },
-    onError: (err, content) => {
+    onError: (err, variables) => {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
         setSaveState('error');
@@ -178,9 +253,9 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
         setConflict(err.conflict);
         return;
       }
-      if (err instanceof ApiError && err.status === 0 && typeof content === 'string') {
+      if (err instanceof ApiError && err.status === 0 && typeof variables?.content === 'string') {
         // Network failure (likely offline) — queue for reconnect.
-        stashPending(content);
+        stashPending(variables.content);
         setSaveState('error');
         toast.error('Offline — edits will sync when reconnected', { id: 'offline-queue' });
         return;
@@ -196,7 +271,7 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
   useEffect(() => {
     const onSaveNow = () => {
       if (!readyRef.current || conflictRef.current) return;
-      saveMutate(textRef.current);
+      saveMutate({ content: textRef.current });
     };
     const onTogglePreview = () => setPreview((value) => !value);
     const onToggleHistory = () => setHistoryOpen((value) => !value);
@@ -204,7 +279,7 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
       const pending = readPending();
       if (pending === null || !readyRef.current || conflictRef.current) return;
       if (pending !== textRef.current) setText(pending);
-      saveMutate(pending);
+      saveMutate({ content: pending });
       toast.success('Back online — synced pending edits');
     };
     window.addEventListener(SHORTCUT_EVENTS.saveNow, onSaveNow);
@@ -244,7 +319,7 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
   useEffect(() => {
     if (!readyRef.current || conflict) return;
     const timer = setTimeout(() => {
-      save.mutate(text);
+      save.mutate({ content: text });
     }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -255,16 +330,38 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
     // Re-anchor onto the server version, then overwrite deliberately.
     baseRef.current = conflict.updated_at;
     setConflict(null);
-    save.mutate(text);
+    save.mutate({ content: text });
   }
 
   function handleLoadTheirs() {
     if (!conflict) return;
-    setText(conflict.content);
-    baseRef.current = conflict.updated_at;
+    const serverRow = conflict;
+    const enc = serverRow.enc ?? noteEnc;
+    if (!enc) {
+      applyTheirs(serverRow.content, serverRow);
+      return;
+    }
+    // Their version is ciphertext — decrypt before adopting.
+    void (async () => {
+      const key = await getCryptoKey();
+      if (!key) {
+        toast.error('No encryption key available — re-enter your token');
+        return;
+      }
+      try {
+        applyTheirs(await decryptText(key, serverRow.content), serverRow);
+      } catch {
+        toast.error('Could not decrypt the other version — token mismatch?');
+      }
+    })();
+  }
+
+  function applyTheirs(content: string, serverRow: NotePayload) {
+    setText(content);
+    baseRef.current = serverRow.updated_at;
     setConflict(null);
-    setSaveState('saved', conflict.updated_at);
-    queryClient.setQueryData(['note'], conflict);
+    setSaveState('saved', serverRow.updated_at);
+    queryClient.setQueryData(['note', noteId], serverRow);
     toast.success('Loaded the other version');
   }
 
@@ -282,6 +379,14 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
     });
   }
 
+  function handleFormat() {
+    if (noteEnc) {
+      toast.warning('Encrypted notes stay private — AI formatting skipped.');
+      return;
+    }
+    format.mutate(text);
+  }
+
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(text);
@@ -293,7 +398,7 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
     }
   }
 
-  if (noteQuery.isPending) {
+  if (noteQuery.isPending || (loadState === null && decryptedQuery.isPending)) {
     return (
       <Card className="flex h-full flex-col">
         <CardHeader>
@@ -328,7 +433,28 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
     );
   }
 
+  // Ciphertext loaded but the token-derived key can't open it: the token was
+  // rotated or differs from the device that encrypted the note.
+  if (loadState === null && decryptedQuery.isError) {
+    return (
+      <Card className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-accent-600/40 bg-accent-500/10 text-accent-300">
+          <Lock className="size-4" />
+        </span>
+        <div>
+          <p className="text-sm font-medium text-zinc-200">Couldn&apos;t decrypt this note</p>
+          <p className="mx-auto mt-1 max-w-xs text-xs text-zinc-500">
+            Your current token doesn&apos;t match the encryption key. Compare the key fingerprint in
+            Settings across your devices.
+          </p>
+        </div>
+        <Button onClick={() => decryptedQuery.refetch()}>Try again</Button>
+      </Card>
+    );
+  }
+
   const words = countWords(text);
+  const noteTitle = notesQuery.data?.find((note) => note.id === noteId)?.title ?? 'scratchpad';
 
   return (
     <>
@@ -341,8 +467,17 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
       />
       <Card className="flex h-full flex-col overflow-hidden">
         <CardHeader>
-          <CardTitle>scratchpad</CardTitle>
+          <CardTitle className="truncate">{noteTitle}</CardTitle>
           <div className="flex items-center gap-2">
+            {noteEnc && (
+              <Badge
+                variant="accent"
+                title="End-to-end encrypted — only ciphertext leaves this browser"
+              >
+                <Lock className="size-3" />
+                Encrypted
+              </Badge>
+            )}
             <span className="hidden font-mono text-[11px] text-zinc-600 sm:inline">
               {words} {words === 1 ? 'word' : 'words'} · {text.length} chars
             </span>
@@ -433,20 +568,20 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
                   </p>
                 </div>
                 <div className="max-h-64 overflow-y-auto p-1.5">
-                  {revisionsQuery.isPending && (
+                  {(revisionsQuery.isPending || revisionTextsQuery.isPending) && (
                     <div className="flex flex-col gap-1.5 p-1.5">
                       <Skeleton className="h-10 w-full" />
                       <Skeleton className="h-10 w-full" />
                       <Skeleton className="h-10 w-full" />
                     </div>
                   )}
-                  {revisionsQuery.isSuccess && revisionsQuery.data.length === 0 && (
+                  {revisionsQuery.isSuccess && visibleRevisions.length === 0 && (
                     <p className="px-3 py-5 text-center text-xs text-zinc-500">
                       No saved versions yet — they appear after your first edits.
                     </p>
                   )}
                   {revisionsQuery.isSuccess &&
-                    revisionsQuery.data.map((revision) => (
+                    visibleRevisions.map((revision) => (
                       <button
                         key={revision.id}
                         onClick={() => handleRestoreRevision(revision)}
@@ -465,7 +600,7 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
                         </span>
                       </button>
                     ))}
-                  {revisionsQuery.isError && (
+                  {(revisionsQuery.isError || revisionTextsQuery.isError) && (
                     <p className="px-3 py-5 text-center text-xs text-zinc-500">
                       Couldn&apos;t load history.
                     </p>
@@ -506,9 +641,13 @@ export default function NoteEditor({ onUnauthorized }: NoteEditorProps) {
               <Button
                 variant="accent"
                 size="sm"
-                onClick={() => format.mutate(text)}
-                disabled={format.isPending || text.length === 0}
-                title="Clean up and structure with AI"
+                onClick={handleFormat}
+                disabled={format.isPending || text.length === 0 || noteEnc}
+                title={
+                  noteEnc
+                    ? 'Encrypted notes stay private — AI formatting skipped'
+                    : 'Clean up and structure with AI'
+                }
                 className={cn(format.isPending && 'opacity-80')}
               >
                 {format.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />}

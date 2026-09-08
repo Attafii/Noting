@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, CloudOff, Loader2, SquareTerminal, TriangleAlert } from 'lucide-react';
+import {
+  Check,
+  CloudOff,
+  Command,
+  Loader2,
+  PanelLeft,
+  Settings2,
+  SquareTerminal,
+  TriangleAlert,
+} from 'lucide-react';
 import { listDocuments } from '../lib/api';
+import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
 import { useSaveStatus, type SaveState } from '../lib/save-status';
 import { cn } from '../lib/utils';
@@ -15,7 +25,7 @@ const SAVE_LABEL: Record<SaveState, string> = {
   error: 'Save failed',
 };
 
-export function TopBar() {
+export function TopBar({ onMenu, onSettings }: { onMenu?: () => void; onSettings?: () => void }) {
   const save = useSaveStatus();
   const docs = useQuery({ queryKey: ['documents'], queryFn: listDocuments, retry: false });
   const [online, setOnline] = useState(() =>
@@ -37,6 +47,15 @@ export function TopBar() {
     <header className="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
+          {onMenu && (
+            <button
+              onClick={onMenu}
+              aria-label="Open notes"
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 transition-colors hover:bg-zinc-800 lg:hidden"
+            >
+              <PanelLeft className="size-4" />
+            </button>
+          )}
           <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
             <SquareTerminal className="size-4" />
           </span>
@@ -57,6 +76,15 @@ export function TopBar() {
               Offline
             </Badge>
           )}
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.openPalette))}
+            title="Command palette (Ctrl+K)"
+            aria-label="Open command palette"
+            className="flex h-6 cursor-pointer items-center gap-1 rounded-full border border-zinc-700/70 bg-zinc-900 px-2 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+          >
+            <Command className="size-3" />
+            <kbd className="font-mono text-[10px]">K</kbd>
+          </button>
           <AnimatePresence mode="wait" initial={false}>
             <motion.span
               key={save.state}
@@ -84,6 +112,17 @@ export function TopBar() {
             <Badge variant="neutral" title={`${docs.data.length} documents stored`}>
               {docs.data.length} {docs.data.length === 1 ? 'file' : 'files'}
             </Badge>
+          )}
+
+          {onSettings && (
+            <button
+              onClick={onSettings}
+              aria-label="Settings"
+              title="Settings"
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+            >
+              <Settings2 className="size-3.5" />
+            </button>
           )}
 
           <span
