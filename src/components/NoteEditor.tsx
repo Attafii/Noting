@@ -81,6 +81,8 @@ export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) 
   const [preview, setPreview] = useState(false);
   const [copied, setCopied] = useState(false);
   const [conflict, setConflict] = useState<NotePayload | null>(null);
+  /** Decrypted server text for the conflict dialog (null while resolving). */
+  const [serverPreview, setServerPreview] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   /** First-load adoption state; null until server data arrives (replaces an init flag). */
   const [loadState, setLoadState] = useState<{ anchor: string; restored: boolean } | null>(null);
@@ -249,8 +251,28 @@ export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) 
       }
       if (err instanceof ApiError && err.code === 'CONFLICT' && err.conflict) {
         // Pause here — the dialog resolves it, autosave resumes after.
+        const serverRow = err.conflict;
         setSaveState('idle');
-        setConflict(err.conflict);
+        setConflict(serverRow);
+        // Never show ciphertext in the comparison dialog: decrypt the server
+        // pane for encrypted notes (async; dialog renders once ready).
+        if (serverRow.enc ?? noteEnc) {
+          setServerPreview(null);
+          void (async () => {
+            const key = await getCryptoKey();
+            if (!key) {
+              setServerPreview('[Locked — re-enter your token to compare]');
+              return;
+            }
+            try {
+              setServerPreview(await decryptText(key, serverRow.content));
+            } catch {
+              setServerPreview('[Could not decrypt — token mismatch?]');
+            }
+          })();
+        } else {
+          setServerPreview(serverRow.content);
+        }
         return;
       }
       if (err instanceof ApiError && err.status === 0 && typeof variables?.content === 'string') {
@@ -330,6 +352,7 @@ export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) 
     // Re-anchor onto the server version, then overwrite deliberately.
     baseRef.current = conflict.updated_at;
     setConflict(null);
+    setServerPreview(null);
     save.mutate({ content: text });
   }
 
@@ -360,6 +383,7 @@ export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) 
     setText(content);
     baseRef.current = serverRow.updated_at;
     setConflict(null);
+    setServerPreview(null);
     setSaveState('saved', serverRow.updated_at);
     queryClient.setQueryData(['note', noteId], serverRow);
     toast.success('Loaded the other version');
@@ -460,6 +484,7 @@ export default function NoteEditor({ noteId, onUnauthorized }: NoteEditorProps) 
     <>
       <ConflictDialog
         server={conflict}
+        serverPreview={serverPreview}
         localPreview={text}
         busy={save.isPending}
         onKeepMine={handleKeepMine}

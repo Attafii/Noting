@@ -8,6 +8,12 @@ import { Card, CardContent } from './ui/card';
 interface ConflictDialogProps {
   /** The server's newer version. Null hides the dialog. */
   server: { content: string; updated_at: string } | null;
+  /**
+   * Decrypted server text for the comparison pane. The raw `server.content`
+   * may be ciphertext (E2E notes) — this prop carries the safe display text,
+   * or null while it resolves.
+   */
+  serverPreview: string | null;
   localPreview: string;
   busy: boolean;
   onKeepMine: () => void;
@@ -16,6 +22,7 @@ interface ConflictDialogProps {
 
 export function ConflictDialog({
   server,
+  serverPreview,
   localPreview,
   busy,
   onKeepMine,
@@ -70,10 +77,23 @@ export function ConflictDialog({
 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <VersionPane label="My version (unsaved)" text={localPreview} accent />
-                  <VersionPane
-                    label={`Their version (${timeAgo(server.updated_at)})`}
-                    text={server.content}
-                  />
+                  {serverPreview === null ? (
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-950/60">
+                      <p className="border-b border-zinc-800/70 px-3 py-1.5 font-mono text-[11px] tracking-wide text-zinc-500 uppercase">
+                        Their version ({timeAgo(server.updated_at)})
+                      </p>
+                      <div className="flex min-h-24 flex-col justify-center gap-1.5 px-3 py-2.5">
+                        <span className="h-3 w-3/4 animate-pulse rounded bg-zinc-800" />
+                        <span className="h-3 w-full animate-pulse rounded bg-zinc-800" />
+                        <span className="h-3 w-2/3 animate-pulse rounded bg-zinc-800" />
+                      </div>
+                    </div>
+                  ) : (
+                    <VersionPane
+                      label={`Their version (${timeAgo(server.updated_at)})`}
+                      text={serverPreview}
+                    />
+                  )}
                 </div>
 
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

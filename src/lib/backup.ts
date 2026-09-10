@@ -33,7 +33,8 @@ interface BackupManifest {
   documents: { file: string; name: string; type: string; enc: boolean }[];
 }
 
-function sanitizeFileName(name: string): string {
+/** Exported for unit tests. */
+export function sanitizeFileName(name: string): string {
   const clean = name
     .replace(/[\\/:*?"<>|#%&\s]+/g, '-')
     .replace(/-+/g, '-')

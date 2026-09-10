@@ -22,7 +22,8 @@ export function indexableFile(fileName: string, mime: string): boolean {
   return /\.(txt|md|markdown|csv|tsv|json|jsonl|log|yaml|yml|xml|html?)$/i.test(fileName);
 }
 
-function chunkText(text: string): string[] {
+/** Exported for unit tests. */
+export function chunkText(text: string): string[] {
   const normalized = text.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
   const paragraphs = normalized.split(/\n{2,}/);

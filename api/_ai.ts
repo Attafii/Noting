@@ -47,11 +47,12 @@ export type ChatFailure = 'timeout' | 'upstream' | 'empty';
 export async function chatComplete(
   messages: ChatMessage[],
   timeoutMs = 8000,
+  maxTokens = 2048,
 ): Promise<{ text: string } | { failure: ChatFailure }> {
   try {
     const res = await postWithTimeout(
       '/chat/completions',
-      { model: CHAT_MODEL, messages, temperature: 0.3, max_tokens: 2048 },
+      { model: CHAT_MODEL, messages, temperature: 0.3, max_tokens: maxTokens },
       timeoutMs,
     );
     if (!res.ok) {

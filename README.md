@@ -39,6 +39,7 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
 4. Run: `npm run dev` → open `http://localhost:5173/?token=YOUR_TOKEN`
    - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.
    - The token is captured into `localStorage` and wiped from the URL on first load.
+5. Optional demo content: `npm run seed` fills the workspace with sample notes, files, history, and a trashed file; `npm run seed:clean` removes it again.
 
 ## Scripts
 
@@ -47,7 +48,8 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
 | `npm run dev`                             | Start the Vite dev server               |
 | `npm run build`                           | Typecheck + production build to `dist/` |
 | `npm run typecheck`                       | `tsc --noEmit`                          |
-| `npm run lint`                            | ESLint (0 errors required)              |
+| `npm run lint`      | ESLint (0 errors required)                |
+| `npm test`          | Vitest unit suites                        |
 | `npm run format` / `npm run format:check` | Prettier write / check                  |
 
 CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, and build on every push/PR.

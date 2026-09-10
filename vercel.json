@@ -19,6 +19,8 @@
     }
   ],
   "functions": {
-    "api/upload.ts": { "memory": 1024 }
+    "api/upload.ts": { "memory": 1024 },
+    "api/ai.ts": { "maxDuration": 30 },
+    "api/ask.ts": { "maxDuration": 30 }
   }
 }

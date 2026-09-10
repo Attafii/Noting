@@ -46,6 +46,8 @@ CREATE TABLE document_chunks (
 
 -- Seed a single note row for the single-user bridge
 INSERT INTO notes (id, title, content) VALUES (1, 'Scratchpad', '') ON CONFLICT (id) DO NOTHING;
+-- Explicit seed ids don't advance SERIAL sequences — align it for new rows.
+SELECT setval('notes_id_seq', COALESCE((SELECT MAX(id) FROM notes), 1), true);
 
 -- Seed a single note row for the single-user bridge
 INSERT INTO notes (id, content) VALUES (1, '') ON CONFLICT (id) DO NOTHING;

@@ -105,12 +105,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       file_name: row.file_name as string,
     }));
 
+    // 9s abort + tight answer budget: Vercel Hobby kills functions at 10s,
+    // and answers are specified tight anyway (see ANSWER_SYSTEM).
     const result = await chatComplete(
       [
         { role: 'system', content: ANSWER_SYSTEM },
         { role: 'user', content: `Excerpts:\n${excerpts}\n\nQuestion: ${question.trim()}` },
       ],
-      20000,
+      9000,
+      1024,
     );
 
     if ('failure' in result) {
