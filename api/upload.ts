@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import busboy from 'busboy';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { resolveAuth } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { indexDocument } from './_index';
 import { getSql } from '../src/lib/db';
@@ -14,10 +14,15 @@ const MAX_BYTES = 4.5 * 1024 * 1024;
  * reason — busboy consumes `req` directly below.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
+  // Multipart gate: busboy needs the raw stream, but auth must still run
+  // first. Blind admin → 404 (sees nothing); unauthed → 401.
+  const auth = await resolveAuth(req);
+  if (auth === null || !('userId' in auth)) {
+    if (auth !== null) res.status(404).json({ error: 'Not found' });
+    else res.status(401).json({ error: 'Unauthorized' });
     return;
   }
+  const userId = auth.userId;
   if (!(await enforceRateLimit(req, res, { limit: 30 }))) return;
 
   if (req.method !== 'POST') {
@@ -89,17 +94,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     try {
       const sql = getSql();
+      await sql
+        .query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id TEXT')
+        .catch(() => undefined);
       const rows = await sql.query(
-        'INSERT INTO documents (file_name, file_type, file_data, enc) VALUES ($1, $2, $3, $4) RETURNING id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at',
-        [fileName, fileType, fileBuffer, encrypted],
+        'INSERT INTO documents (file_name, file_type, file_data, enc, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at',
+        [fileName, fileType, fileBuffer, encrypted, userId],
       );
       responded = true;
       const doc = rows[0];
       res.status(200).json(doc);
       // RAG indexing is best-effort and runs after the response so uploads
-      // stay fast; it no-ops for encrypted or non-text files.
+      // stay fast; it no-ops for encrypted or non-text files, and verifies
+      // the document owner before embedding (per-user isolation).
       const docId = doc.id as number;
-      void indexDocument(docId, fileName, fileType, fileBuffer, encrypted).catch((e) =>
+      void indexDocument(docId, fileName, fileType, fileBuffer, encrypted, userId).catch((e) =>
         console.error('indexing error', e),
       );
     } catch (e) {

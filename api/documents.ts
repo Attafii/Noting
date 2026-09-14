@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 
@@ -7,10 +7,8 @@ const ACTIVE_COLUMNS =
   'id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
   const sql = getSql();
@@ -19,10 +17,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET' && req.query?.trash === '1') {
     try {
       await sql.query(
-        "DELETE FROM documents WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'",
+        "DELETE FROM documents WHERE user_id = $1 AND deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'",
+        [userId],
       );
       const rows = await sql.query(
-        `SELECT ${ACTIVE_COLUMNS}, deleted_at FROM documents WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
+        `SELECT ${ACTIVE_COLUMNS}, deleted_at FROM documents WHERE user_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`,
+        [userId],
       );
       res.status(200).json(rows);
     } catch (e) {
@@ -35,7 +35,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'GET') {
     try {
       const rows = await sql.query(
-        `SELECT ${ACTIVE_COLUMNS} FROM documents WHERE deleted_at IS NULL ORDER BY uploaded_at DESC`,
+        `SELECT ${ACTIVE_COLUMNS} FROM documents WHERE user_id = $1 AND deleted_at IS NULL ORDER BY uploaded_at DESC`,
+        [userId],
       );
       res.status(200).json(rows);
     } catch (e) {
@@ -54,8 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     try {
       const rows = await sql.query(
-        'UPDATE documents SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id',
-        [id],
+        'UPDATE documents SET deleted_at = NULL WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL RETURNING id',
+        [id, userId],
       );
       if (rows.length === 0) {
         res.status(404).json({ error: 'Document not found in trash' });
@@ -78,15 +79,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       if (req.query?.permanent === '1') {
         // Hard delete; chunks cascade via FK.
-        const rows = await sql.query('DELETE FROM documents WHERE id = $1 RETURNING id', [id]);
+        const rows = await sql.query(
+          'DELETE FROM documents WHERE id = $1 AND user_id = $2 RETURNING id',
+          [id, userId],
+        );
         if (rows.length === 0) {
           res.status(404).json({ error: 'Document not found' });
           return;
         }
       } else {
         const rows = await sql.query(
-          'UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
-          [id],
+          'UPDATE documents SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL RETURNING id',
+          [id, userId],
         );
         if (rows.length === 0) {
           res.status(404).json({ error: 'Document not found' });

@@ -1,15 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { bodyTooLargeMessage, checkBodySize, MAX_NOTE_BYTES } from './_limits';
 import { getSql } from '../src/lib/db';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
   const sql = getSql();
@@ -18,8 +16,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       const id = parseId(req.query?.id) ?? 1;
       const rows = await sql.query(
-        'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1',
-        [id],
+        'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1 AND user_id = $2',
+        [id, userId],
       );
       if (rows.length === 0) {
         res.status(404).json({ error: 'Note not found' });
@@ -49,10 +47,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       // Optimistic-concurrency guard: when the client tells us which version
       // it based its edits on, refuse to silently clobber a newer one.
+      // Cross-user ids → 404 (never 403).
       if (typeof base_updated_at === 'string' && base_updated_at.length > 0) {
         const current = await sql.query(
-          'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1',
-          [noteId],
+          'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1 AND user_id = $2',
+          [noteId, userId],
         );
         if (current.length === 0) {
           res.status(404).json({ error: 'Note not found' });
@@ -68,9 +67,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const rows = await sql.query(
         `UPDATE notes SET content = $1, enc = COALESCE($3, enc), updated_at = NOW()
-         WHERE id = $2
+         WHERE id = $2 AND user_id = $4
           RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
-        [content, noteId, typeof enc === 'boolean' ? enc : null],
+        [content, noteId, typeof enc === 'boolean' ? enc : null, userId],
       );
       if (rows.length === 0) {
         res.status(404).json({ error: 'Note not found' });

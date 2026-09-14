@@ -1,17 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 
 /**
  * Storage usage for the Settings page and future Free/Paid caps.
- * Read-only aggregate — no PII, no content.
+ * Read-only aggregate scoped to the caller — no PII, no content,
+ * no cross-user totals.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
   if (req.method !== 'GET') {
@@ -23,19 +22,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const notes = await sql
       .query(
-        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(content)), 0)::int AS bytes FROM notes WHERE deleted_at IS NULL',
+        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(content)), 0)::int AS bytes FROM notes WHERE user_id = $1 AND deleted_at IS NULL',
+        [userId],
       )
       .catch(() => [{ count: 0, bytes: 0 }]);
     const trashedNotes = await sql
-      .query('SELECT COUNT(*)::int AS count FROM notes WHERE deleted_at IS NOT NULL')
+      .query('SELECT COUNT(*)::int AS count FROM notes WHERE user_id = $1 AND deleted_at IS NOT NULL', [
+        userId,
+      ])
       .catch(() => [{ count: 0 }]);
     const files = await sql
       .query(
-        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(file_data)), 0)::int AS bytes FROM documents WHERE deleted_at IS NULL',
+        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(file_data)), 0)::int AS bytes FROM documents WHERE user_id = $1 AND deleted_at IS NULL',
+        [userId],
       )
       .catch(() => [{ count: 0, bytes: 0 }]);
     const trashedFiles = await sql
-      .query('SELECT COUNT(*)::int AS count FROM documents WHERE deleted_at IS NOT NULL')
+      .query('SELECT COUNT(*)::int AS count FROM documents WHERE user_id = $1 AND deleted_at IS NOT NULL', [
+        userId,
+      ])
       .catch(() => [{ count: 0 }]);
     res.status(200).json({
       notes: { count: notes[0].count, bytes: Number(notes[0].bytes) },

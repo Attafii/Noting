@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { aiConfigured, chatComplete, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai';
 import { getSql } from '../src/lib/db';
@@ -15,10 +15,8 @@ const ANSWER_SYSTEM = `You answer questions using ONLY the provided document exc
 - Keep answers tight; use markdown (short paragraphs, bullets where they help).`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   // Each question spends an embedding call plus a chat call.
   if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
 
@@ -62,6 +60,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Encrypted and trashed documents are invisible here by construction.
+    // Retrieval is scoped to the caller's own documents (d.user_id = $4) —
+    // cross-user chunks are never searched, cited, or returned.
     // The model filter keeps retrieval inside a single embedding space, so a
     // future model swap can't silently mix incomparable vectors.
     let rows;
@@ -70,10 +70,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `SELECT c.content, d.id AS document_id, d.file_name, c.embedding <=> $1::vector AS distance
          FROM document_chunks c
          JOIN documents d ON d.id = c.document_id
-         WHERE d.deleted_at IS NULL AND d.enc = FALSE AND c.embedding IS NOT NULL AND c.model = $3
+         WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.user_id = $4 AND c.embedding IS NOT NULL AND c.model = $3
          ORDER BY c.embedding <=> $1::vector
          LIMIT $2`,
-        [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL],
+        [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL, userId],
       );
     } catch (e) {
       // Most commonly: the pgvector extension/table is missing in this

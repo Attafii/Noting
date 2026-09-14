@@ -157,10 +157,10 @@ export function TopBar({
             <button
               onClick={() => {
                 onLock();
-                toast.success('Workspace locked — token cleared from this browser');
+                toast.success('Workspace locked — token and answer cleared');
               }}
               aria-label="Lock workspace"
-              title="Lock workspace (clears the token from this browser)"
+              title="Lock workspace (clears the token and the in-memory answer)"
               className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-red-900/70 hover:text-red-300"
             >
               <Lock className="size-3.5" />

@@ -1,4 +1,4 @@
-import { bridgeHeaders, getToken } from './token';
+import { bridgeHeaders, getAnswer, getToken } from './token';
 
 export class ApiError extends Error {
   status: number;
@@ -330,6 +330,8 @@ export function uploadFile(
 
     const token = getToken();
     if (token) xhr.setRequestHeader('x-bridge-token', token);
+    const answer = getAnswer();
+    if (answer) xhr.setRequestHeader('x-bridge-answer', answer);
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -415,4 +417,72 @@ export function triggerBlobDownload(blob: Blob, fileName: string): void {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+// ---------------------------------------------------------------------------
+// Self-service tokens + Q&A + hint (public, unauthenticated — token travels
+// in the JSON body, never in headers or URLs).
+// ---------------------------------------------------------------------------
+
+export interface Challenge {
+  nonce: string;
+  question: string;
+  expires_at: number;
+  sig: string;
+}
+
+export interface MintResult {
+  token_plaintext: string;
+  user_id: string;
+  question: string;
+}
+
+async function publicRequest<T>(path: string, body: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+  if (!res.ok) {
+    const parsed = await readJson(res).catch(() => null);
+    throw new ApiError(res.status, errorFromBody(parsed, `Request failed (${res.status})`));
+  }
+  return (await readJson(res)) as T;
+}
+
+export async function fetchChallenge(): Promise<Challenge> {
+  let res: Response;
+  try {
+    res = await fetch('/api/challenge');
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+  if (!res.ok) throw new ApiError(res.status, 'Could not load the human-check');
+  return (await readJson(res)) as Challenge;
+}
+
+export function mintToken(input: {
+  label?: string;
+  question: string;
+  answer: string;
+  hint?: string;
+  challenge: Challenge & { answer: number };
+}): Promise<MintResult> {
+  return publicRequest<MintResult>('/api/tokens', input);
+}
+
+export function fetchQuestion(
+  token: string,
+  session_id: string,
+): Promise<{ question: string; hint_available: boolean }> {
+  return publicRequest('/api/token-question', { token, session_id });
+}
+
+export function fetchHint(token: string, session_id: string): Promise<{ hint: string }> {
+  return publicRequest('/api/hint', { token, session_id });
 }

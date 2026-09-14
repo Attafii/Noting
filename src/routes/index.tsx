@@ -14,7 +14,7 @@ import { TopBar } from '../components/TopBar';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { createNote, listNotes } from '../lib/api';
-import { clearToken, getToken } from '../lib/token';
+import { clearToken, getAnswer, getToken } from '../lib/token';
 import { SHORTCUT_EVENTS, useGlobalShortcuts } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
 import { cn } from '../lib/utils';
@@ -27,7 +27,14 @@ const SELECTED_KEY = 'selected-note-id';
 
 function IndexComponent() {
   const navigate = useNavigate();
-  const [token, setToken] = useState<string | null>(() => getToken());
+  const queryClient = useQueryClient();
+  // The answer lives in memory only: a remembered token alone never unlocks.
+  // Every reload lands back on the gate until token + answer are both present.
+  const [session, setSession] = useState<string | null>(() => {
+    const t = getToken();
+    return t && getAnswer() ? t : null;
+  });
+  const [epoch, setEpoch] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(() => {
     const stored = localStorage.getItem(SELECTED_KEY);
     const parsed = stored ? parseInt(stored, 10) : NaN;
@@ -52,12 +59,25 @@ function IndexComponent() {
 
   const handleUnauthorized = useCallback(() => {
     clearToken();
-    setToken(null);
-  }, []);
+    try {
+      localStorage.removeItem(SELECTED_KEY);
+    } catch {
+      /* ignore */
+    }
+    setSelectedId(null);
+    queryClient.clear();
+    setSession(null);
+  }, [queryClient]);
 
-  const handleTokenSaved = useCallback((value: string) => {
-    setToken(value);
-  }, []);
+  const handleTokenSaved = useCallback(
+    (value: string) => {
+      setSelectedId(null);
+      queryClient.clear();
+      setSession(value);
+      setEpoch((e) => e + 1);
+    },
+    [queryClient],
+  );
 
   const handleSelect = useCallback((id: number) => {
     setSelectedId(id);
@@ -69,7 +89,7 @@ function IndexComponent() {
     setSidebarOpen(false);
   }, []);
 
-  if (!token) {
+  if (!session) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100">
         <AmbientBackground />
@@ -79,7 +99,7 @@ function IndexComponent() {
   }
 
   return (
-    <div key={token} className="min-h-screen bg-zinc-950 text-zinc-100">
+    <div key={`${session}:${epoch}`} className="min-h-screen bg-zinc-950 text-zinc-100">
       <AmbientBackground />
       <TopBar onMenu={handleMenu} onSettings={goSettings} onLock={handleUnauthorized} />
       <AuthedWorkspace

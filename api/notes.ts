@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
@@ -55,9 +55,7 @@ async function setTags(
 }
 
 async function ensureOrgColumns(sql: NeonQueryFunction<false, false>): Promise<void> {
-  // Best-effort: fresh checkouts that haven't run migrate-008 yet keep working
-  // (new columns simply read as null/false). Runs once per cold start at most
-  // in practice; failures are swallowed by callers.
+  // Best-effort: fresh checkouts that haven't run migrations yet keep working.
   await sql.query('ALTER TABLE notes ADD COLUMN IF NOT EXISTS folder_id INTEGER');
   await sql.query(
     'ALTER TABLE notes ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT FALSE',
@@ -68,16 +66,26 @@ async function ensureOrgColumns(sql: NeonQueryFunction<false, false>): Promise<v
   await sql.query(
     'ALTER TABLE notes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0',
   );
+  await sql.query('ALTER TABLE notes ADD COLUMN IF NOT EXISTS user_id TEXT');
   await sql.query(
     'CREATE TABLE IF NOT EXISTS note_tags (note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY (note_id, tag))',
   );
 }
 
+async function folderOwnedBy(
+  sql: NeonQueryFunction<false, false>,
+  folderId: number,
+  userId: string,
+): Promise<boolean> {
+  const rows = await sql
+    .query('SELECT id FROM folders WHERE id = $1 AND user_id = $2', [folderId, userId])
+    .catch(() => []);
+  return rows.length > 0;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
   const sql = getSql();
@@ -87,8 +95,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await ensureOrgColumns(sql).catch(() => undefined);
       const trash = req.query?.trash === '1';
       const sort = parseSort(typeof req.query?.sort === 'string' ? req.query.sort : undefined);
-      const where = trash ? 'WHERE notes.deleted_at IS NOT NULL' : 'WHERE notes.deleted_at IS NULL';
-      const rows = await sql.query(`SELECT ${LIST_COLUMNS} FROM notes ${where} ${orderBy(sort)}`);
+      const where = trash
+        ? 'WHERE notes.user_id = $1 AND notes.deleted_at IS NOT NULL'
+        : 'WHERE notes.user_id = $1 AND notes.deleted_at IS NULL';
+      const rows = await sql.query(
+        `SELECT ${LIST_COLUMNS} FROM notes ${where} ${orderBy(sort)}`,
+        [userId],
+      );
       res.status(200).json(rows);
       return;
     }
@@ -104,8 +117,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (action === 'restore' && typeof id === 'number' && Number.isInteger(id)) {
         await ensureOrgColumns(sql).catch(() => undefined);
         const rows = await sql.query(
-          'UPDATE notes SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 RETURNING id',
-          [id],
+          'UPDATE notes SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id',
+          [id, userId],
         );
         if (rows.length === 0) {
           res.status(404).json({ error: 'Note not found' });
@@ -118,10 +131,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         typeof title === 'string' && title.trim() ? title.trim().slice(0, 120) : 'Untitled';
       const folder =
         typeof folder_id === 'number' && Number.isInteger(folder_id) ? folder_id : null;
+      if (folder !== null && !(await folderOwnedBy(sql, folder, userId))) {
+        res.status(404).json({ error: 'Note not found' });
+        return;
+      }
       const rows = await sql.query(
-        `INSERT INTO notes (title, content, folder_id) VALUES ($1, '', $2)
+        `INSERT INTO notes (title, content, folder_id, user_id) VALUES ($1, '', $2, $3)
          RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
-        [clean, folder],
+        [clean, folder, userId],
       );
       res.status(201).json({ ...rows[0], tags: [] });
       return;
@@ -146,22 +163,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await ensureOrgColumns(sql).catch(() => undefined);
       const folderSet =
         folder_id === null || (typeof folder_id === 'number' && Number.isInteger(folder_id));
+      if (folderSet && typeof folder_id === 'number' && !(await folderOwnedBy(sql, folder_id, userId))) {
+        res.status(404).json({ error: 'Note not found' });
+        return;
+      }
       // Org-only edits (folder/favorite/order/tags) must not move updated_at:
       // the editor's conflict anchor compares it, and a bump without a content
       // change would manufacture a false 409 on the next autosave.
+      // Cross-user ids → 404 (never 403, avoids an id oracle).
       const rows = await sql.query(
         `UPDATE notes SET
-           title = COALESCE($2, title),
-           pinned = COALESCE($3, pinned),
-           archived = COALESCE($4, archived),
-           folder_id = CASE WHEN $5 THEN $6 ELSE folder_id END,
-           favorite = COALESCE($7, favorite),
-           sort_order = COALESCE($8, sort_order),
-           updated_at = CASE WHEN $2 IS NOT NULL OR $3 IS NOT NULL OR $4 IS NOT NULL THEN NOW() ELSE updated_at END
-         WHERE id = $1 AND deleted_at IS NULL
+           title = COALESCE($3, title),
+           pinned = COALESCE($4, pinned),
+           archived = COALESCE($5, archived),
+           folder_id = CASE WHEN $6 THEN $7 ELSE folder_id END,
+           favorite = COALESCE($8, favorite),
+           sort_order = COALESCE($9, sort_order),
+           updated_at = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL OR $5 IS NOT NULL THEN NOW() ELSE updated_at END
+         WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
          RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
         [
           id,
+          userId,
           typeof title === 'string' ? title.trim().slice(0, 120) || null : null,
           typeof pinned === 'boolean' ? pinned : null,
           typeof archived === 'boolean' ? archived : null,
@@ -197,11 +220,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const permanent = req.query?.permanent === '1';
       if (permanent) {
         const count = await sql.query(
-          'SELECT COUNT(*)::int AS n FROM notes WHERE deleted_at IS NULL',
+          'SELECT COUNT(*)::int AS n FROM notes WHERE user_id = $1 AND deleted_at IS NULL',
+          [userId],
         );
         if (count[0].n <= 1) {
           const trashed = await sql.query(
-            'SELECT COUNT(*)::int AS n FROM notes WHERE deleted_at IS NOT NULL',
+            'SELECT COUNT(*)::int AS n FROM notes WHERE user_id = $1 AND deleted_at IS NOT NULL',
+            [userId],
           );
           if (trashed[0].n === 0) {
             res.status(400).json({ error: 'Cannot delete the last note' });
@@ -209,7 +234,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
         // Revisions, tags and future dependents cascade via FK.
-        const rows = await sql.query('DELETE FROM notes WHERE id = $1 RETURNING id', [id]);
+        const rows = await sql.query('DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id', [
+          id,
+          userId,
+        ]);
         if (rows.length === 0) {
           res.status(404).json({ error: 'Note not found' });
           return;
@@ -219,8 +247,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       // Soft-delete → 30-day trash (auto-purge runs on trash reads).
       const rows = await sql.query(
-        'UPDATE notes SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
-        [id],
+        'UPDATE notes SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL RETURNING id',
+        [id, userId],
       );
       if (rows.length === 0) {
         res.status(404).json({ error: 'Note not found' });
@@ -228,7 +256,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       await sql
         .query(
-          "DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'",
+          "DELETE FROM notes WHERE user_id = $1 AND deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days'",
+          [userId],
         )
         .catch(() => undefined);
       res.status(200).json({ ok: true });

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { bodyTooLargeMessage, checkBodySize, MAX_AI_BYTES } from './_limits';
 import { aiConfigured, chatComplete } from './_ai';
@@ -14,10 +14,8 @@ const FAILURE_WARNINGS = {
 } as const;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   // Tight budget: each call spends paid OpenRouter quota.
   if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
 

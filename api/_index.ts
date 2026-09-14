@@ -48,7 +48,9 @@ export function chunkText(text: string): string[] {
 /**
  * Best-effort RAG indexing for a freshly uploaded document. Never throws —
  * indexing failures must not fail uploads. Skips encrypted files (only
- * ciphertext is visible server-side) and non-text formats.
+ * ciphertext is visible server-side) and non-text formats. When ownerUserId
+ * is provided, the document owner is verified first so one user can never
+ * index (or leak chunks into) another user's search space.
  */
 export async function indexDocument(
   documentId: number,
@@ -56,24 +58,33 @@ export async function indexDocument(
   mime: string,
   data: Buffer,
   encrypted: boolean,
+  ownerUserId?: string,
 ): Promise<{ indexed: number }> {
   if (encrypted || !aiConfigured() || !indexableFile(fileName, mime)) {
     return { indexed: 0 };
   }
   try {
+    const sql = getSql();
+    if (ownerUserId) {
+      const owner = await sql.query(
+        'SELECT id FROM documents WHERE id = $1 AND user_id = $2',
+        [documentId, ownerUserId],
+      );
+      if (owner.length === 0) return { indexed: 0 };
+    }
     const text = data.toString('utf8').slice(0, MAX_CHARS);
     if (!text.trim()) return { indexed: 0 };
     const chunks = chunkText(text);
     if (chunks.length === 0) return { indexed: 0 };
 
-    const sql = getSql();
+    const sql2 = getSql();
     let indexed = 0;
     for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
       const batch = chunks.slice(i, i + EMBED_BATCH);
       const vectors = await embedTexts(batch);
       if (!vectors) break;
       for (let j = 0; j < batch.length; j++) {
-        await sql.query(
+        await sql2.query(
           'INSERT INTO document_chunks (document_id, chunk_index, content, embedding, model) VALUES ($1, $2, $3, $4::vector, $5)',
           [documentId, i + j, batch[j], vectorLiteral(vectors[j]), EMBED_MODEL],
         );

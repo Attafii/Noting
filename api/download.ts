@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateToken, unauthorizedResponse } from './_auth';
+import { requireUser } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 
@@ -37,10 +37,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Header-only auth, like every other endpoint. The UI downloads via authed
   // fetch → blob, so the token stays out of URLs, history, and server logs.
   // Legacy `?token=` query-param auth was removed (now 401s).
-  if (!validateToken(req)) {
-    unauthorizedResponse(res);
-    return;
-  }
+  const userId = await requireUser(req, res);
+  if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
   if (req.method !== 'GET') {
@@ -58,8 +56,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const rows = await sql.query(
-      'SELECT file_name, file_type, file_data, enc FROM documents WHERE id = $1 AND deleted_at IS NULL',
-      [parseInt(id as string, 10)],
+      'SELECT file_name, file_type, file_data, enc FROM documents WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+      [parseInt(id as string, 10), userId],
     );
     if (rows.length === 0) {
       res.status(404).json({ error: 'Document not found' });

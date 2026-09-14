@@ -1,11 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createHash } from 'node:crypto';
 import { getSql } from '../src/lib/db';
 
 export const WINDOW_MS = 60_000;
 const DEFAULT_LIMIT = 120;
 
 /**
- * DB-backed sliding-window limiter, keyed by token prefix + IP.
+ * DB-backed sliding-window limiter, keyed by token hash prefix.
+ *
+ * Privacy: NO IP tracking — the key derives only from sha256(x-bridge-token
+ * or x-bridge-answer context). No `x-forwarded-for` is read anywhere.
  *
  * Single source of truth is Postgres (`rate_limit_buckets`), so limits hold
  * across serverless instances and cold starts. The in-memory map is only the
@@ -15,15 +19,14 @@ const DEFAULT_LIMIT = 120;
  * for a personal tool), same as the revisions best-effort handling.
  */
 
-function clientKey(req: VercelRequest): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  const ip =
-    typeof forwarded === 'string' && forwarded.length > 0
-      ? forwarded.split(',')[0].trim()
-      : 'unknown';
+/** Per-user bucket key — sha256 of the presented credential, no IP. Exported for tests. */
+export function clientKey(req: VercelRequest): string {
   const token = req.headers['x-bridge-token'];
-  const who = typeof token === 'string' && token.length > 0 ? token.slice(0, 12) : 'anon';
-  return `${who}:${ip}`;
+  const who =
+    typeof token === 'string' && token.length > 0
+      ? createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 16)
+      : 'anon';
+  return `u:${who}`;
 }
 
 export interface RateLimitOptions {
