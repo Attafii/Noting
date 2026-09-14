@@ -138,3 +138,136 @@ body {
 [data-sonner-toaster] {
   font-family: var(--font-sans);
 }
+
+/* ---- P0 theming: accent picker ---- */
+[data-accent='emerald'] {
+  --color-accent-300: #6ee7b7;
+  --color-accent-400: #34d399;
+  --color-accent-500: #10b981;
+  --color-accent-600: #059669;
+}
+[data-accent='cobalt'] {
+  --color-accent-300: #93c5fd;
+  --color-accent-400: #60a5fa;
+  --color-accent-500: #3b82f6;
+  --color-accent-600: #2563eb;
+}
+
+/* ---- P0 theming: density (compact scales the spacing rhythm) ---- */
+[data-density='compact'] {
+  --spacing: 0.2rem;
+}
+
+/* ---- P0 theming: light mode ----
+   Pragmatic remap of the zinc surfaces the app actually uses, so the whole
+   workspace follows one theme without touching every component. Dark remains
+   the default; light overrides win by attribute+class specificity. */
+[data-theme='light'] body {
+  background-color: #f5f5f4;
+  color: #1c1917;
+}
+[data-theme='light'] ::selection {
+  background: rgb(201 154 63 / 0.3);
+  color: #1c1917;
+}
+[data-theme='light'] .bg-zinc-950 {
+  background-color: #fafaf9;
+}
+[data-theme='light'] .bg-zinc-950\/70 {
+  background-color: rgb(250 250 249 / 0.8);
+}
+[data-theme='light'] .bg-zinc-950\/60 {
+  background-color: rgb(250 250 249 / 0.6);
+}
+[data-theme='light'] .bg-zinc-900 {
+  background-color: #ffffff;
+}
+[data-theme='light'] .bg-zinc-900\/80,
+[data-theme='light'] .bg-zinc-900\/70,
+[data-theme='light'] .bg-zinc-900\/60,
+[data-theme='light'] .bg-zinc-900\/50 {
+  background-color: rgb(255 255 255 / 0.9);
+}
+[data-theme='light'] .bg-zinc-800 {
+  background-color: #f5f5f4;
+}
+[data-theme='light'] .bg-zinc-800\/80,
+[data-theme='light'] .bg-zinc-800\/70,
+[data-theme='light'] .bg-zinc-800\/60 {
+  background-color: rgb(231 229 228 / 0.7);
+}
+[data-theme='light'] .text-zinc-100,
+[data-theme='light'] .text-zinc-200 {
+  color: #1c1917;
+}
+[data-theme='light'] .text-zinc-300 {
+  color: #44403c;
+}
+[data-theme='light'] .text-zinc-400 {
+  color: #57534e;
+}
+[data-theme='light'] .text-zinc-500 {
+  color: #78716c;
+}
+[data-theme='light'] .text-zinc-600 {
+  color: #a8a29e;
+}
+[data-theme='light'] .border-zinc-700 {
+  border-color: #d6d3d1;
+}
+[data-theme='light'] .border-zinc-800,
+[data-theme='light'] .border-zinc-800\/70,
+[data-theme='light'] .border-zinc-800\/80 {
+  border-color: #e7e5e4;
+}
+[data-theme='light'] .placeholder\:text-zinc-600::placeholder {
+  color: #a8a29e;
+}
+[data-theme='light'] .hover\:bg-zinc-800:hover,
+[data-theme='light'] .hover\:bg-zinc-800\/70:hover,
+[data-theme='light'] .hover\:bg-zinc-900\/50:hover,
+[data-theme='light'] .hover\:bg-zinc-900\/60:hover {
+  background-color: #f5f5f4;
+}
+[data-theme='light'] .hover\:text-zinc-100:hover,
+[data-theme='light'] .hover\:text-zinc-200:hover {
+  color: #1c1917;
+}
+[data-theme='light'] .hover\:text-zinc-300:hover {
+  color: #44403c;
+}
+[data-theme='light'] .hover\:border-zinc-600:hover {
+  border-color: #a8a29e;
+}
+[data-theme='light'] .markdown-body {
+  color: #44403c;
+}
+[data-theme='light'] .markdown-body h1,
+[data-theme='light'] .markdown-body h2,
+[data-theme='light'] .markdown-body h3,
+[data-theme='light'] .markdown-body h4 {
+  color: #1c1917;
+}
+[data-theme='light'] .markdown-body code {
+  background-color: rgb(231 229 228 / 0.8);
+  color: #1c1917;
+}
+[data-theme='light'] .markdown-body pre {
+  border-color: #e7e5e4;
+  background-color: #fafaf9;
+}
+[data-theme='light'] .markdown-body blockquote {
+  border-color: #d6d3d1;
+  color: #57534e;
+}
+[data-theme='light'] .markdown-body hr {
+  border-color: #e7e5e4;
+}
+[data-theme='light'] .markdown-body th,
+[data-theme='light'] .markdown-body td {
+  border-color: #e7e5e4;
+}
+[data-theme='light'] .markdown-body th {
+  background-color: #f5f5f4;
+  color: #1c1917;
+}

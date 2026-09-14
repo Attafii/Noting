@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
 import './styles.css';
+import { initTheme } from './lib/theme';
+
+// Apply persisted theme before first paint (avoids a dark→light flash).
+initTheme();
 
 // Dev-only query inspector — never bundled into production (lazy + DEV gate).
 const Devtools = lazy(() =>

@@ -1,4 +1,4 @@
-import JSZip from 'jszip';
+import JSZip, { type JSZipObject } from 'jszip';
 import {
   createNote,
   fetchDocumentBlob,
@@ -114,6 +114,52 @@ export interface ImportResult {
   failed: number;
 }
 
+/** Zip-bomb backstops: hostile archives decompress to gigabytes from kilobytes. */
+const MAX_ENTRY_BYTES = 25 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_ENTRIES = 2000;
+
+/** Declared uncompressed size from the zip central directory (null if unknown). */
+function declaredSize(entry: JSZipObject): number | null {
+  const internal = entry as unknown as { _data?: { uncompressedSize?: unknown } };
+  const size = internal._data?.uncompressedSize;
+  return typeof size === 'number' && size >= 0 ? size : null;
+}
+
+/**
+ * Pre-scan every file we intend to extract. Oversized entries are rejected
+ * before a single byte is decompressed; unknown sizes pass (JSZip only
+ * reports them for exotic archives) and still hit the 4.5MB upload ceiling
+ * downstream for files.
+ *
+ * Exported for unit tests.
+ */
+export function planExtraction(
+  zip: JSZip,
+  files: string[],
+): { allowed: Set<string>; rejected: number; total: number } {
+  const allowed = new Set<string>();
+  let rejected = 0;
+  let total = 0;
+  const names = files.slice(0, MAX_ENTRIES);
+  rejected += Math.max(0, files.length - names.length);
+  for (const name of names) {
+    const entry = zip.file(name);
+    if (!entry || entry.dir) {
+      rejected++;
+      continue;
+    }
+    const size = declaredSize(entry);
+    if (size !== null && (size > MAX_ENTRY_BYTES || total + size > MAX_TOTAL_BYTES)) {
+      rejected++;
+      continue;
+    }
+    allowed.add(name);
+    total += size ?? 0;
+  }
+  return { allowed, rejected, total };
+}
+
 /**
  * Restore a backup zip. Notes are recreated with their titles/pins; files are
  * re-uploaded (and re-encrypted when E2E is currently on). Idempotent-safe to
@@ -134,11 +180,20 @@ export async function importBackup(
   const e2e = isE2EEnabled();
   let notes = 0;
   let files = 0;
-  let failed = 0;
+  // Reject decompression bombs before extracting anything.
+  const plan = planExtraction(zip, [
+    ...manifest.notes.map((entry) => entry.file),
+    ...(manifest.documents ?? []).map((entry) => entry.file),
+  ]);
+  let failed = plan.rejected;
 
   for (let i = 0; i < manifest.notes.length; i++) {
     const entry = manifest.notes[i];
     onProgress?.({ phase: 'notes', done: i, total: manifest.notes.length });
+    if (!plan.allowed.has(entry.file)) {
+      failed++;
+      continue;
+    }
     try {
       const text = await zip.file(entry.file)?.async('string');
       if (typeof text !== 'string') throw new Error('missing entry');
@@ -163,6 +218,10 @@ export async function importBackup(
   for (let i = 0; i < (manifest.documents ?? []).length; i++) {
     const entry = manifest.documents[i];
     onProgress?.({ phase: 'files', done: i, total: manifest.documents.length });
+    if (!plan.allowed.has(entry.file)) {
+      failed++;
+      continue;
+    }
     try {
       const data = await zip.file(entry.file)?.async('uint8array');
       if (!data) throw new Error('missing entry');

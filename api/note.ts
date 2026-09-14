@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateToken, unauthorizedResponse } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
+import { bodyTooLargeMessage, checkBodySize, MAX_NOTE_BYTES } from './_limits';
 import { getSql } from '../src/lib/db';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
 
@@ -9,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     unauthorizedResponse(res);
     return;
   }
-  if (!enforceRateLimit(req, res)) return;
+  if (!(await enforceRateLimit(req, res))) return;
 
   const sql = getSql();
 
@@ -17,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       const id = parseId(req.query?.id) ?? 1;
       const rows = await sql.query(
-        'SELECT id, title, content, pinned, archived, enc, updated_at, created_at FROM notes WHERE id = $1',
+        'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1',
         [id],
       );
       if (rows.length === 0) {
@@ -40,11 +41,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(400).json({ error: 'content must be string' });
         return;
       }
+      // Unbounded-body guard: measure utf8 bytes before any DB work.
+      const size = checkBodySize(content, MAX_NOTE_BYTES);
+      if (size.over) {
+        res.status(413).json({ error: bodyTooLargeMessage(size.bytes, MAX_NOTE_BYTES) });
+        return;
+      }
       // Optimistic-concurrency guard: when the client tells us which version
       // it based its edits on, refuse to silently clobber a newer one.
       if (typeof base_updated_at === 'string' && base_updated_at.length > 0) {
         const current = await sql.query(
-          'SELECT id, title, content, pinned, archived, enc, updated_at, created_at FROM notes WHERE id = $1',
+          'SELECT id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at FROM notes WHERE id = $1',
           [noteId],
         );
         if (current.length === 0) {
@@ -62,7 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rows = await sql.query(
         `UPDATE notes SET content = $1, enc = COALESCE($3, enc), updated_at = NOW()
          WHERE id = $2
-         RETURNING id, title, content, pinned, archived, enc, updated_at, created_at`,
+          RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
         [content, noteId, typeof enc === 'boolean' ? enc : null],
       );
       if (rows.length === 0) {

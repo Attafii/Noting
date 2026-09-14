@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { validateToken, unauthorizedResponse } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
+import { bodyTooLargeMessage, checkBodySize, MAX_AI_BYTES } from './_limits';
 import { aiConfigured, chatComplete } from './_ai';
 
 const SYSTEM_PROMPT =
@@ -18,7 +19,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
   // Tight budget: each call spends paid OpenRouter quota.
-  if (!enforceRateLimit(req, res, { limit: 10 })) return;
+  if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -28,6 +29,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { text } = req.body as { text: string };
   if (typeof text !== 'string' || text.length === 0) {
     res.status(400).json({ error: 'text must be non-empty string' });
+    return;
+  }
+  // Unbounded-body guard: measure utf8 bytes before spending paid quota.
+  const size = checkBodySize(text, MAX_AI_BYTES);
+  if (size.over) {
+    res.status(413).json({ error: bodyTooLargeMessage(size.bytes, MAX_AI_BYTES) });
     return;
   }
 

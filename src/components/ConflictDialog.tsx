@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { GitCompareArrows } from 'lucide-react';
 import { useEffect } from 'react';
 import { timeAgo } from '../lib/format';
+import { useFocusTrap } from '../lib/focus-trap';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 
@@ -29,6 +30,8 @@ export function ConflictDialog({
   onLoadTheirs,
 }: ConflictDialogProps) {
   // Lock background scroll while the conflict is unresolved.
+  // No Esc to dismiss by design — autosave is paused until the user chooses.
+  const panelRef = useFocusTrap<HTMLDivElement>(server !== null);
   useEffect(() => {
     if (!server) return;
     const prev = document.body.style.overflow;
@@ -52,6 +55,8 @@ export function ConflictDialog({
           className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm"
         >
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}

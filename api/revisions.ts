@@ -8,7 +8,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     unauthorizedResponse(res);
     return;
   }
-  if (!enforceRateLimit(req, res)) return;
+  if (!(await enforceRateLimit(req, res))) return;
 
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' });

@@ -11,7 +11,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
-  if (!enforceRateLimit(req, res)) return;
+  if (!(await enforceRateLimit(req, res))) return;
 
   const started = Date.now();
   try {

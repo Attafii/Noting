@@ -1,6 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { describe, expect, it } from 'vitest';
-import { enforceRateLimit } from './_ratelimit';
+import { describe, expect, it, beforeEach } from 'vitest';
+import {
+  clearMemoryBuckets,
+  enforceRateLimit,
+  memoryStore,
+  type RateLimitStore,
+} from './_ratelimit';
 
 function fakeReq(ip: string, token = 'test-token-abc'): VercelRequest {
   return {
@@ -37,27 +42,61 @@ function fakeRes(): TestRes {
   return res;
 }
 
-function check(req: VercelRequest, res: TestRes, limit?: number): boolean {
-  return enforceRateLimit(req, res as unknown as VercelResponse, { limit });
+function check(
+  req: VercelRequest,
+  res: TestRes,
+  limit?: number,
+  store?: RateLimitStore,
+): Promise<boolean> {
+  return enforceRateLimit(req, res as unknown as VercelResponse, {
+    limit,
+    store: store ?? memoryStore,
+  });
 }
 
 describe('enforceRateLimit', () => {
-  it('allows requests within budget and blocks past it', () => {
+  beforeEach(() => clearMemoryBuckets());
+
+  it('allows requests within budget and blocks past it', async () => {
     for (let i = 0; i < 10; i++) {
-      expect(check(fakeReq('1.2.3.4'), fakeRes(), 10)).toBe(true);
+      await expect(check(fakeReq('1.2.3.4'), fakeRes(), 10)).resolves.toBe(true);
     }
     const res = fakeRes();
-    expect(check(fakeReq('1.2.3.4'), res, 10)).toBe(false);
+    await expect(check(fakeReq('1.2.3.4'), res, 10)).resolves.toBe(false);
     expect(res.statusCode).toBe(429);
     expect(Number(res.headers['Retry-After'])).toBeGreaterThanOrEqual(1);
     expect(res.body).toEqual({ error: 'Too many requests — slow down a moment' });
   });
 
-  it('isolates buckets per client', () => {
-    expect(check(fakeReq('9.9.9.9'), fakeRes(), 10)).toBe(true);
+  it('isolates buckets per client', async () => {
+    await expect(check(fakeReq('9.9.9.9'), fakeRes(), 10)).resolves.toBe(true);
   });
 
-  it('applies the default budget independently', () => {
-    expect(check(fakeReq('1.2.3.4'), fakeRes())).toBe(true);
+  it('applies the default budget independently', async () => {
+    await expect(check(fakeReq('1.2.3.4'), fakeRes())).resolves.toBe(true);
+  });
+
+  it('supports an injectable store (offline unit-test path)', async () => {
+    const hits: string[] = [];
+    const custom: RateLimitStore = {
+      async check(key: string, _limit: number, _now: number) {
+        hits.push(key);
+        return { allowed: true, retryAfterSec: 0 };
+      },
+    };
+    await expect(check(fakeReq('5.6.7.8'), fakeRes(), 10, custom)).resolves.toBe(true);
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toContain('5.6.7.8');
+  });
+
+  it('fails OPEN when the store throws (availability over strictness)', async () => {
+    const broken: RateLimitStore = {
+      async check() {
+        throw new Error('db down');
+      },
+    };
+    const res = fakeRes();
+    await expect(check(fakeReq('1.1.1.1'), res, 10, broken)).resolves.toBe(true);
+    expect(res.statusCode).toBe(0);
   });
 });

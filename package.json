@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "seed": "node scripts/seed-mock-data.cjs",
-    "seed:clean": "node scripts/seed-mock-data.cjs --clean"
+    "seed:clean": "node scripts/seed-mock-data.cjs --clean",
+    "migrate": "node scripts/migrate.cjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
@@ -24,6 +25,7 @@
     "@tanstack/react-router": "^1.114.33",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "fuse.js": "^7.5.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.40.0",
     "motion": "^13.2.0",

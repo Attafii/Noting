@@ -1,20 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
-import { StickyNote, X } from 'lucide-react';
+import { Command, Files, PanelLeft, Plus, Sparkles, StickyNote, X } from 'lucide-react';
+import { toast } from 'sonner';
 import NoteEditor from '../components/NoteEditor';
 import { CommandPalette } from '../components/CommandPalette';
 import { NotesSidebar } from '../components/NotesSidebar';
-import { SettingsDialog } from '../components/SettingsDialog';
+import { OnboardingTour } from '../components/OnboardingTour';
 import { SidePanel } from '../components/SidePanel';
 import { TokenGate } from '../components/TokenGate';
 import { TopBar } from '../components/TopBar';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { listNotes } from '../lib/api';
+import { createNote, listNotes } from '../lib/api';
 import { clearToken, getToken } from '../lib/token';
-import { useGlobalShortcuts } from '../lib/shortcuts';
+import { SHORTCUT_EVENTS, useGlobalShortcuts } from '../lib/shortcuts';
+import { timeAgo } from '../lib/format';
+import { cn } from '../lib/utils';
 
 export const Route = createFileRoute('/')({
   component: IndexComponent,
@@ -23,6 +26,7 @@ export const Route = createFileRoute('/')({
 const SELECTED_KEY = 'selected-note-id';
 
 function IndexComponent() {
+  const navigate = useNavigate();
   const [token, setToken] = useState<string | null>(() => getToken());
   const [selectedId, setSelectedId] = useState<number | null>(() => {
     const stored = localStorage.getItem(SELECTED_KEY);
@@ -30,8 +34,21 @@ function IndexComponent() {
     return Number.isNaN(parsed) ? null : parsed;
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
   useGlobalShortcuts();
+
+  const goSettings = useCallback(() => {
+    void navigate({ to: '/settings' });
+  }, [navigate]);
+
+  const handleMenu = useCallback(() => {
+    // Desktop: collapse/expand the sidebar column. Mobile: open the drawer.
+    if (window.matchMedia('(min-width: 1024px)').matches) {
+      setSideCollapsed((value) => !value);
+    } else {
+      setSidebarOpen(true);
+    }
+  }, []);
 
   const handleUnauthorized = useCallback(() => {
     clearToken();
@@ -64,14 +81,15 @@ function IndexComponent() {
   return (
     <div key={token} className="min-h-screen bg-zinc-950 text-zinc-100">
       <AmbientBackground />
-      <TopBar onMenu={() => setSidebarOpen(true)} onSettings={() => setSettingsOpen(true)} />
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <TopBar onMenu={handleMenu} onSettings={goSettings} onLock={handleUnauthorized} />
       <AuthedWorkspace
         selectedId={selectedId}
         onSelect={handleSelect}
         sidebarOpen={sidebarOpen}
+        sideCollapsed={sideCollapsed}
         onCloseSidebar={() => setSidebarOpen(false)}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSidebar={() => setSidebarOpen(true)}
+        onOpenSettings={goSettings}
         onUnauthorized={handleUnauthorized}
       />
     </div>
@@ -82,18 +100,32 @@ function AuthedWorkspace({
   selectedId,
   onSelect,
   sidebarOpen,
+  sideCollapsed,
   onCloseSidebar,
+  onOpenSidebar,
   onOpenSettings,
   onUnauthorized,
 }: {
   selectedId: number | null;
   onSelect: (id: number) => void;
   sidebarOpen: boolean;
+  sideCollapsed: boolean;
   onCloseSidebar: () => void;
+  onOpenSidebar: () => void;
   onOpenSettings: () => void;
   onUnauthorized: () => void;
 }) {
+  const queryClient = useQueryClient();
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
+  const [sideW, setSideW] = useState(() => {
+    try {
+      const stored = parseInt(localStorage.getItem('layout-side-w') ?? '', 10);
+      return Number.isFinite(stored) ? Math.min(420, Math.max(200, stored)) : 264;
+    } catch {
+      return 264;
+    }
+  });
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   // Adopt the first usable note when nothing (valid) is selected.
   useEffect(() => {
@@ -106,25 +138,81 @@ function AuthedWorkspace({
     }
   }, [notesQuery.data, selectedId, onSelect]);
 
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const next = Math.min(420, Math.max(200, drag.startW + e.clientX - drag.startX));
+      setSideW(next);
+    }
+    function onUp() {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      try {
+        localStorage.setItem('layout-side-w', String(sideW));
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [sideW]);
+
+  function goSideTab(tab: 'files' | 'ask') {
+    window.dispatchEvent(
+      new CustomEvent<'files' | 'ask'>(SHORTCUT_EVENTS.sideTab, { detail: tab }),
+    );
+    requestAnimationFrame(() => {
+      document.getElementById('side-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   return (
     <>
       <CommandPalette onSelectNote={onSelect} onOpenSettings={onOpenSettings} />
-      <main className="mx-auto grid max-w-7xl grid-cols-1 items-start gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[260px_minmax(0,1.18fr)_minmax(0,1fr)]">
-        {/* Sidebar — static column on desktop. */}
-        <motion.aside
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          className="hidden min-h-0 lg:block"
-        >
-          <Card className="flex max-h-[calc(100vh-6.5rem)] min-h-[480px] flex-col p-2">
-            <NotesSidebar
-              selectedId={selectedId}
-              onSelect={onSelect}
-              onUnauthorized={onUnauthorized}
+      <OnboardingTour />
+      <main
+        className={cn(
+          'mx-auto grid max-w-7xl grid-cols-1 items-start gap-4 px-4 pt-5 pb-24 sm:px-6 lg:pb-5',
+          sideCollapsed
+            ? 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'
+            : 'lg:grid-cols-[var(--side-w)_minmax(0,1.15fr)_minmax(0,1fr)]',
+        )}
+        style={{ '--side-w': `${sideW}px` } as React.CSSProperties}
+      >
+        {/* Sidebar — resizable, collapsible column on desktop. */}
+        {!sideCollapsed && (
+          <motion.aside
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="relative hidden min-h-0 lg:block"
+          >
+            <Card className="flex max-h-[calc(100vh-6.5rem)] min-h-[480px] flex-col p-2">
+              <NotesSidebar
+                selectedId={selectedId}
+                onSelect={onSelect}
+                onUnauthorized={onUnauthorized}
+              />
+            </Card>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sidebar"
+              title="Drag to resize"
+              onMouseDown={(e) => {
+                dragRef.current = { startX: e.clientX, startW: sideW };
+                document.body.style.cursor = 'col-resize';
+              }}
+              className="absolute top-8 -right-1.5 bottom-8 w-3 cursor-col-resize rounded-full transition-colors hover:bg-accent-500/30"
             />
-          </Card>
-        </motion.aside>
+          </motion.aside>
+        )}
 
         <motion.section
           initial={{ opacity: 0, y: 14 }}
@@ -133,14 +221,19 @@ function AuthedWorkspace({
           className="min-h-0"
         >
           {selectedId !== null ? (
-            <NoteEditor key={selectedId} noteId={selectedId} onUnauthorized={onUnauthorized} />
+            <NoteEditor
+              key={selectedId}
+              noteId={selectedId}
+              onUnauthorized={onUnauthorized}
+              onSelectNote={onSelect}
+            />
           ) : (
-            <Card className="flex min-h-[480px] flex-col items-center justify-center gap-3 p-10 text-center">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-500">
-                <StickyNote className="size-4" />
-              </span>
-              <p className="text-sm text-zinc-400">Select a note to start writing</p>
-            </Card>
+            <HomeDashboard
+              onSelect={onSelect}
+              onUnauthorized={onUnauthorized}
+              notesQuery={notesQuery}
+              queryClient={queryClient}
+            />
           )}
         </motion.section>
 
@@ -148,11 +241,41 @@ function AuthedWorkspace({
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
-          className="flex min-h-0 flex-col gap-4"
+          className="flex min-h-0 scroll-mt-20 flex-col gap-4"
+          id="side-panel"
         >
           <SidePanel onUnauthorized={onUnauthorized} />
         </motion.section>
       </main>
+
+      {/* Mobile bottom bar. */}
+      <nav
+        aria-label="Primary"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800/70 bg-zinc-950/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
+      >
+        <div className="grid grid-cols-4">
+          <BottomTab
+            icon={<PanelLeft className="size-4" />}
+            label="Notes"
+            onClick={onOpenSidebar}
+          />
+          <BottomTab
+            icon={<Command className="size-4" />}
+            label="Search"
+            onClick={() => window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.openPalette))}
+          />
+          <BottomTab
+            icon={<Files className="size-4" />}
+            label="Files"
+            onClick={() => goSideTab('files')}
+          />
+          <BottomTab
+            icon={<Sparkles className="size-4" />}
+            label="Ask"
+            onClick={() => goSideTab('ask')}
+          />
+        </div>
+      </nav>
 
       {/* Sidebar drawer on mobile. */}
       <AnimatePresence>
@@ -191,6 +314,138 @@ function AuthedWorkspace({
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+function BottomTab({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex cursor-pointer flex-col items-center gap-1 py-2.5 text-[11px] text-zinc-400 transition-colors active:scale-95 hover:text-zinc-100"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/** Home dashboard: continue where you left off, workspace stats, quick capture. */
+function HomeDashboard({
+  onSelect,
+  onUnauthorized,
+  notesQuery,
+  queryClient,
+}: {
+  onSelect: (id: number) => void;
+  onUnauthorized: () => void;
+  notesQuery: ReturnType<
+    typeof useQuery<typeof listNotes extends () => Promise<infer T> ? T : never>
+  >;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const notes = (notesQuery.data ?? []).filter((n) => !n.archived);
+  const recent = [...notes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5);
+  const favorites = notes.filter((n) => n.favorite);
+
+  async function handleNew() {
+    setCreating(true);
+    try {
+      const note = await createNote('Untitled');
+      await queryClient.invalidateQueries({ queryKey: ['notes'] });
+      onSelect(note.id);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Invalid or missing token'))
+        onUnauthorized();
+      else toast.error(err instanceof Error ? err.message : 'Could not create note');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <Card className="flex min-h-[480px] flex-col gap-5 p-6">
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400">
+          <StickyNote className="size-4" />
+        </span>
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-100">Home</h2>
+          <p className="font-mono text-[11px] text-zinc-500">
+            {notes.length} note{notes.length === 1 ? '' : 's'}
+            {favorites.length > 0 &&
+              ` · ${favorites.length} favorite${favorites.length === 1 ? '' : 's'}`}
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant="accent"
+          className="ml-auto"
+          disabled={creating}
+          onClick={() => void handleNew()}
+        >
+          <Plus /> New note
+        </Button>
+      </div>
+
+      {recent.length > 0 ? (
+        <div>
+          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+            Continue where you left off
+          </p>
+          <div className="mt-2 flex flex-col gap-1">
+            {recent.map((note) => (
+              <button
+                key={note.id}
+                onClick={() => onSelect(note.id)}
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] font-medium text-zinc-200">
+                    {note.title}
+                  </span>
+                  <span className="block truncate font-mono text-[11px] text-zinc-600">
+                    {(note.preview ?? '').replace(/\s+/g, ' ').slice(0, 70) || 'Empty note'}
+                  </span>
+                </span>
+                <span className="shrink-0 font-mono text-[11px] text-zinc-600">
+                  {timeAgo(note.updated_at)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-2 py-8 text-center">
+          <p className="text-sm text-zinc-300">A blank page, no noise.</p>
+          <p className="max-w-xs text-xs text-zinc-500">
+            Create your first note above, press Ctrl+K to jump anywhere, and paste images straight
+            into the editor — they land in Files automatically.
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-2 border-t border-zinc-800/70 pt-4 text-center">
+        {[
+          { k: 'Ctrl K', v: 'Jump anywhere' },
+          { k: '/ + Enter', v: 'Slash commands' },
+          { k: 'Ctrl S', v: 'Save right now' },
+        ].map((s) => (
+          <div key={s.k} className="rounded-lg bg-zinc-900/50 px-2 py-2.5">
+            <p className="font-mono text-[11px] text-zinc-200">{s.k}</p>
+            <p className="mt-0.5 text-[11px] text-zinc-500">{s.v}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

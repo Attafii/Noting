@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
+import Fuse from 'fuse.js';
 import {
   Download,
   FileText,
   Files,
+  Hash,
   History,
   Plus,
   Save,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createNote, listDocuments, listNotes, triggerBlobDownload } from '../lib/api';
+import { useFocusTrap } from '../lib/focus-trap';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
 import { Input } from './ui/input';
@@ -27,7 +30,7 @@ interface CommandPaletteProps {
 
 interface PaletteItem {
   key: string;
-  section: 'Notes' | 'Files' | 'Actions';
+  section: 'Notes' | 'Tags' | 'Files' | 'Actions';
   label: string;
   sub?: string;
   icon: LucideIcon;
@@ -41,6 +44,7 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useFocusTrap<HTMLDivElement>(open);
 
   useEffect(() => {
     const toggle = () => {
@@ -103,40 +107,119 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
     }
   }
 
-  const items: PaletteItem[] = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const match = (text: string) => !q || text.toLowerCase().includes(q);
+  // Fuzzy indexes (rebuilt when the underlying lists change). Encrypted notes
+  // expose titles/previews/tags only — ciphertext never enters the index.
+  const notesFuse = useMemo(
+    () =>
+      new Fuse(notesQuery.data ?? [], {
+        keys: [
+          { name: 'title', weight: 2 },
+          { name: 'tags', weight: 1.5 },
+          { name: 'preview', weight: 1 },
+        ],
+        threshold: 0.4,
+        ignoreLocation: true,
+        includeScore: false,
+      }),
+    [notesQuery.data],
+  );
+  const docsFuse = useMemo(
+    () =>
+      new Fuse(docsQuery.data ?? [], {
+        keys: [{ name: 'file_name', weight: 1 }],
+        threshold: 0.4,
+        ignoreLocation: true,
+      }),
+    [docsQuery.data],
+  );
+  const tagList = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const note of notesQuery.data ?? []) {
+      if (note.archived) continue;
+      for (const tag of note.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([tag, count]) => ({ tag, count }));
+  }, [notesQuery.data]);
+  const tagsFuse = useMemo(
+    () =>
+      new Fuse(tagList, {
+        keys: [{ name: 'tag', weight: 1 }],
+        threshold: 0.4,
+        ignoreLocation: true,
+      }),
+    [tagList],
+  );
 
-    const notes: PaletteItem[] = (notesQuery.data ?? [])
-      .filter((note) => !note.archived && match(`${note.title} ${note.preview ?? ''}`))
-      .slice(0, 6)
-      .map((note) => ({
+  const items: PaletteItem[] = useMemo(() => {
+    const q = query.trim();
+    const match = (text: string) => !q || text.toLowerCase().includes(q.toLowerCase());
+
+    const liveNotes = (notesQuery.data ?? []).filter((note) => !note.archived);
+    const noteHits = q
+      ? notesFuse
+          .search(q)
+          .map((r) => r.item)
+          .filter((note) => !note.archived)
+          .slice(0, 8)
+      : liveNotes.slice(0, 6);
+    const notes: PaletteItem[] = noteHits.map((note) => {
+      const tags = (note.tags ?? []).slice(0, 3);
+      return {
         key: `note-${note.id}`,
         section: 'Notes',
         label: note.title,
-        sub: note.preview?.replace(/\s+/g, ' ').slice(0, 60),
+        sub: [
+          note.preview?.replace(/\s+/g, ' ').slice(0, 60),
+          tags.length > 0 ? tags.map((t) => `#${t}`).join(' ') : undefined,
+          note.enc ? 'Encrypted' : undefined,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         icon: StickyNote,
         run: () => {
           close();
           onSelectNote(note.id);
         },
-      }));
+      };
+    });
 
-    const files: PaletteItem[] = (docsQuery.data ?? [])
-      .filter((doc) => match(doc.file_name))
-      .slice(0, 6)
-      .map((doc) => ({
-        key: `doc-${doc.id}`,
-        section: 'Files',
-        label: doc.file_name,
-        icon: FileText,
-        run: () => {
-          close();
-          window.dispatchEvent(
-            new CustomEvent<number>(SHORTCUT_EVENTS.previewDocument, { detail: doc.id }),
-          );
-        },
-      }));
+    const tagHits = q
+      ? tagsFuse
+          .search(q)
+          .map((r) => r.item)
+          .slice(0, 4)
+      : [];
+    const tags: PaletteItem[] = tagHits.map(({ tag, count }) => ({
+      key: `tag-${tag}`,
+      section: 'Tags',
+      label: `#${tag}`,
+      sub: `${count} note${count === 1 ? '' : 's'}`,
+      icon: Hash,
+      run: () => {
+        close();
+        window.dispatchEvent(new CustomEvent<string>(SHORTCUT_EVENTS.filterTag, { detail: tag }));
+      },
+    }));
+
+    const docHits = q
+      ? docsFuse
+          .search(q)
+          .map((r) => r.item)
+          .slice(0, 6)
+      : (docsQuery.data ?? []).slice(0, 3);
+    const files: PaletteItem[] = docHits.map((doc) => ({
+      key: `doc-${doc.id}`,
+      section: 'Files',
+      label: doc.file_name,
+      sub: doc.enc ? 'Encrypted' : undefined,
+      icon: FileText,
+      run: () => {
+        close();
+        window.dispatchEvent(
+          new CustomEvent<number>(SHORTCUT_EVENTS.previewDocument, { detail: doc.id }),
+        );
+      },
+    }));
 
     const actions: PaletteItem[] = (
       [
@@ -204,9 +287,9 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
       .filter((action) => action.match)
       .map((action) => ({ ...action, section: 'Actions' as const }));
 
-    return [...notes, ...files, ...actions];
+    return [...notes, ...tags, ...files, ...actions];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, notesQuery.data, docsQuery.data]);
+  }, [query, notesQuery.data, docsQuery.data, notesFuse, docsFuse, tagsFuse]);
 
   useEffect(() => {
     if (!open) return;
@@ -251,6 +334,8 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
           className="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/70 p-4 pt-[14vh] backdrop-blur-sm"
         >
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
             initial={{ opacity: 0, y: -10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.99 }}

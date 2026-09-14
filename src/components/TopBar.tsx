@@ -6,14 +6,19 @@ import {
   CloudOff,
   Command,
   Loader2,
+  Lock,
+  Moon,
   PanelLeft,
   Settings2,
   SquareTerminal,
+  Sun,
   TriangleAlert,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { listDocuments } from '../lib/api';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
+import { applyTheme, getTheme, useTheme } from '../lib/theme';
 import { useSaveStatus, type SaveState } from '../lib/save-status';
 import { cn } from '../lib/utils';
 import { Badge } from './ui/badge';
@@ -25,8 +30,17 @@ const SAVE_LABEL: Record<SaveState, string> = {
   error: 'Save failed',
 };
 
-export function TopBar({ onMenu, onSettings }: { onMenu?: () => void; onSettings?: () => void }) {
+export function TopBar({
+  onMenu,
+  onSettings,
+  onLock,
+}: {
+  onMenu?: () => void;
+  onSettings?: () => void;
+  onLock?: () => void;
+}) {
   const save = useSaveStatus();
+  const theme = useTheme();
   const docs = useQuery({ queryKey: ['documents'], queryFn: listDocuments, retry: false });
   const [online, setOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine,
@@ -116,12 +130,40 @@ export function TopBar({ onMenu, onSettings }: { onMenu?: () => void; onSettings
 
           {onSettings && (
             <button
+              onClick={() => {
+                const next = getTheme();
+                applyTheme({ ...next, mode: next.mode === 'dark' ? 'light' : 'dark' });
+              }}
+              aria-label={theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+            >
+              {theme.mode === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+            </button>
+          )}
+
+          {onSettings && (
+            <button
               onClick={onSettings}
               aria-label="Settings"
               title="Settings"
               className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
             >
               <Settings2 className="size-3.5" />
+            </button>
+          )}
+
+          {onLock && (
+            <button
+              onClick={() => {
+                onLock();
+                toast.success('Workspace locked — token cleared from this browser');
+              }}
+              aria-label="Lock workspace"
+              title="Lock workspace (clears the token from this browser)"
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-red-900/70 hover:text-red-300"
+            >
+              <Lock className="size-3.5" />
             </button>
           )}
 

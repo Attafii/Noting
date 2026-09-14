@@ -15,6 +15,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Secrets-leak gate (tracked files only; never touches untracked .env.local)
+        run: |
+          if git grep -E 'sk-or-v1-[A-Za-z0-9]{10,}|npg_[A-Za-z0-9]{10,}|BEGIN [A-Z ]*PRIVATE KEY' -- . ':!.github/workflows/ci.yml' ':!README.md'; then
+            echo 'Possible secret committed to tracked files' >&2
+            exit 1
+          fi
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check

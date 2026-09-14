@@ -34,21 +34,14 @@ export function byteaToBuffer(value: unknown): Buffer {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Support token from header OR query param (for legacy <a href> downloads).
-  // The UI downloads via authed fetch → blob, so the token stays out of URLs.
-  const queryToken = req.query?.token;
-  const expected = process.env.GLOBAL_SECRET_TOKEN;
-  const queryValid =
-    typeof queryToken === 'string' &&
-    queryToken.length > 0 &&
-    typeof expected === 'string' &&
-    expected.length > 0 &&
-    queryToken === expected;
-  if (!validateToken(req) && !queryValid) {
+  // Header-only auth, like every other endpoint. The UI downloads via authed
+  // fetch → blob, so the token stays out of URLs, history, and server logs.
+  // Legacy `?token=` query-param auth was removed (now 401s).
+  if (!validateToken(req)) {
     unauthorizedResponse(res);
     return;
   }
-  if (!enforceRateLimit(req, res)) return;
+  if (!(await enforceRateLimit(req, res))) return;
 
   if (req.method !== 'GET') {
     res.status(405).json({ error: 'Method not allowed' });

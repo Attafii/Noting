@@ -29,8 +29,11 @@ export interface NotePayload {
   archived: boolean;
   /** True when the stored content is client-side ciphertext (E2E). */
   enc: boolean;
+  folder_id: number | null;
+  favorite: boolean;
   updated_at: string;
   created_at: string;
+  tags?: string[];
 }
 
 export interface NoteSummary {
@@ -39,10 +42,31 @@ export interface NoteSummary {
   pinned: boolean;
   archived: boolean;
   enc: boolean;
+  folder_id: number | null;
+  favorite: boolean;
+  sort_order?: number;
   updated_at: string;
   created_at: string;
   preview: string;
+  tags: string[];
 }
+
+export interface Folder {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  note_count: number;
+}
+
+export interface UsageStats {
+  notes: { count: number; bytes: number };
+  trashedNotes: { count: number };
+  files: { count: number; bytes: number };
+  trashedFiles: { count: number };
+}
+
+export type NoteSort = 'updated' | 'created' | 'alpha' | 'manual';
 
 export interface NoteRevision {
   id: number;
@@ -164,20 +188,48 @@ export function saveNote(input: SaveNoteInput): Promise<NotePayload> {
 }
 
 export function listNotes(): Promise<NoteSummary[]> {
-  return request<NoteSummary[]>('/api/notes');
+  return listNotesSorted('updated');
 }
 
-export function createNote(title?: string): Promise<NotePayload> {
+export function listNotesSorted(sort: NoteSort = 'updated'): Promise<NoteSummary[]> {
+  return request<NoteSummary[]>(`/api/notes?sort=${sort}`).then((rows) =>
+    rows.map((row) => ({ ...row, tags: Array.isArray(row.tags) ? row.tags : [] })),
+  );
+}
+
+export function listTrashedNotes(): Promise<NoteSummary[]> {
+  return request<NoteSummary[]>('/api/notes?trash=1').then((rows) =>
+    rows.map((row) => ({ ...row, tags: Array.isArray(row.tags) ? row.tags : [] })),
+  );
+}
+
+export function restoreNote(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, action: 'restore' }),
+  });
+}
+
+export function createNote(title?: string, folderId?: number | null): Promise<NotePayload> {
   return request<NotePayload>('/api/notes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, folder_id: folderId ?? undefined }),
   });
 }
 
 export function updateNote(
   id: number,
-  patch: { title?: string; pinned?: boolean; archived?: boolean },
+  patch: {
+    title?: string;
+    pinned?: boolean;
+    archived?: boolean;
+    folder_id?: number | null;
+    favorite?: boolean;
+    sort_order?: number;
+    tags?: string[];
+  },
 ): Promise<NotePayload> {
   return request<NotePayload>('/api/notes', {
     method: 'PATCH',
@@ -186,8 +238,42 @@ export function updateNote(
   });
 }
 
-export function deleteNote(id: number): Promise<{ ok: true }> {
-  return request<{ ok: true }>(`/api/notes?id=${id}`, { method: 'DELETE' });
+export function deleteNote(id: number, permanent = false): Promise<{ ok: true }> {
+  return request<{ ok: true }>(
+    permanent ? `/api/notes?id=${id}&permanent=1` : `/api/notes?id=${id}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function listFolders(): Promise<Folder[]> {
+  return request<Folder[]>('/api/folders');
+}
+
+export function createFolder(name: string): Promise<Folder> {
+  return request<Folder>('/api/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function updateFolder(
+  id: number,
+  patch: { name?: string; sort_order?: number },
+): Promise<Folder> {
+  return request<Folder>('/api/folders', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, ...patch }),
+  });
+}
+
+export function deleteFolder(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/folders?id=${id}`, { method: 'DELETE' });
+}
+
+export function getUsage(): Promise<UsageStats> {
+  return request<UsageStats>('/api/usage');
 }
 
 export function askQuestion(question: string): Promise<AskResult> {

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Download, KeyRound, Loader2, Lock, LockOpen, ShieldCheck, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { triggerBlobDownload } from '../lib/api';
+import { useFocusTrap } from '../lib/focus-trap';
 import { getKeyFingerprint, setE2EEnabled, useE2E } from '../lib/e2e';
 import { encryptExistingFiles, encryptExistingNotes, type MigrateResult } from '../lib/e2e-migrate';
 import { Button } from './ui/button';
@@ -22,6 +23,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupProgress, setBackupProgress] = useState('');
   const importRef = useRef<HTMLInputElement>(null);
+  const panelRef = useFocusTrap<HTMLDivElement>(open);
 
   const fingerprintQuery = useQuery({
     queryKey: ['fingerprint'],
@@ -146,6 +148,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm"
         >
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}

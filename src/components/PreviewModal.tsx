@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Download, FileWarning, Loader2, Lock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError, fetchDocumentBlob, triggerBlobDownload, type DocumentMeta } from '../lib/api';
+import { useFocusTrap } from '../lib/focus-trap';
 import { formatBytes } from '../lib/format';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
@@ -33,6 +34,7 @@ export function PreviewModal({ doc, onClose, onUnauthorized, decrypt }: PreviewM
   const [file, setFile] = useState<LoadedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const panelRef = useFocusTrap<HTMLDivElement>(doc !== null);
 
   useEffect(() => {
     if (!doc) return;
@@ -120,6 +122,8 @@ export function PreviewModal({ doc, onClose, onUnauthorized, decrypt }: PreviewM
           className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm"
         >
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
