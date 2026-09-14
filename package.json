@@ -15,8 +15,6 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "seed": "node scripts/seed-mock-data.cjs",
-    "seed:clean": "node scripts/seed-mock-data.cjs --clean",
     "migrate": "node scripts/migrate.cjs"
   },
   "dependencies": {
