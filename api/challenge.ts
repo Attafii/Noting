@@ -48,6 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(429).json({ error: 'Too many requests — slow down a moment' });
       return;
     }
+    // Single-use nonces — must never be cached anywhere.
+    res.setHeader('Cache-Control', 'no-store');
     res.status(200).json(issueChallenge());
   } catch (e) {
     console.error('challenge handler failed', e);

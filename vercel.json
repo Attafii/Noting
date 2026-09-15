@@ -1,8 +1,18 @@
 {
   "rewrites": [
-    { "source": "/api/challenge", "destination": "/api/challenge" },
-    { "source": "/api/health", "destination": "/api/health" },
-    { "source": "/api/(.*)", "destination": "/api/router?route=$1" },
+    { "source": "/api/ai", "destination": "/api/router?route=ai" },
+    { "source": "/api/ask", "destination": "/api/router?route=ask" },
+    { "source": "/api/documents", "destination": "/api/router?route=documents" },
+    { "source": "/api/download", "destination": "/api/router?route=download" },
+    { "source": "/api/folders", "destination": "/api/router?route=folders" },
+    { "source": "/api/hint", "destination": "/api/router?route=hint" },
+    { "source": "/api/note", "destination": "/api/router?route=note" },
+    { "source": "/api/notes", "destination": "/api/router?route=notes" },
+    { "source": "/api/revisions", "destination": "/api/router?route=revisions" },
+    { "source": "/api/token-question", "destination": "/api/router?route=token-question" },
+    { "source": "/api/tokens", "destination": "/api/router?route=tokens" },
+    { "source": "/api/upload", "destination": "/api/router?route=upload" },
+    { "source": "/api/usage", "destination": "/api/router?route=usage" },
     { "source": "/((?!api).*)", "destination": "/index.html" }
   ],
   "headers": [

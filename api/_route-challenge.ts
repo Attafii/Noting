@@ -26,6 +26,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('challenge misconfigured — GLOBAL_SECRET_TOKEN is not set');
     }
     if (!(await enforceRateLimit(req, res, { limit: 30, store: memoryStore }))) return;
+    // Single-use nonces — must never be cached anywhere.
+    res.setHeader('Cache-Control', 'no-store');
     res.status(200).json(issueChallenge());
   } catch (e) {
     console.error('challenge handler failed', e);
