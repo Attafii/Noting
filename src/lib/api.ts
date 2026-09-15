@@ -424,11 +424,34 @@ export function triggerBlobDownload(blob: Blob, fileName: string): void {
 // in the JSON body, never in headers or URLs).
 // ---------------------------------------------------------------------------
 
+export interface ChallengeTile {
+  g: string;
+  r: number;
+  label: string;
+}
+
 export interface Challenge {
   nonce: string;
-  question: string;
+  instruction: string;
+  tiles: ChallengeTile[];
   expires_at: number;
   sig: string;
+  /** Backwards-compat mirror of `instruction` (old cached clients). */
+  question: string;
+}
+
+export interface ChallengeSolution {
+  nonce: string;
+  expires_at: number;
+  sig: string;
+  /** Index of the tapped tile. */
+  selected: number;
+  /** ms from tile render to tap — server rejects instant (<800ms) submits. */
+  elapsed_ms: number;
+  /** Honeypot — always sent empty; bots fill it. */
+  honeypot?: string;
+  /** Pointer/key interaction count — soft bot signal. */
+  interactions?: number;
 }
 
 export interface MintResult {
@@ -462,7 +485,13 @@ export async function fetchChallenge(): Promise<Challenge> {
   } catch {
     throw new ApiError(0, 'Network error — check your connection');
   }
-  if (!res.ok) throw new ApiError(res.status, 'Could not load the human-check');
+  if (!res.ok) {
+    const parsed = await readJson(res).catch(() => null);
+    throw new ApiError(
+      res.status,
+      errorFromBody(parsed, `Could not load the human-check (${res.status})`),
+    );
+  }
   return (await readJson(res)) as Challenge;
 }
 
@@ -471,7 +500,10 @@ export function mintToken(input: {
   question: string;
   answer: string;
   hint?: string;
-  challenge: Challenge & { answer: number };
+  /** Built-in visual check solution (primary). */
+  challenge?: ChallengeSolution;
+  /** Cloudflare Turnstile client token (fallback only). */
+  turnstileToken?: string;
 }): Promise<MintResult> {
   return publicRequest<MintResult>('/api/tokens', input);
 }

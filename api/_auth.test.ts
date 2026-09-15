@@ -10,6 +10,7 @@ vi.mock('../src/lib/db', () => ({
 
 import {
   clearAuthCache,
+  clearChallengeNonces,
   hashAnswer,
   hashToken,
   isValidSessionId,
@@ -154,10 +155,7 @@ describe('requireUser (blind admin)', () => {
   it('rejects bad credentials with 401', async () => {
     mockQuery.mockResolvedValueOnce([]);
     const res = fakeRes();
-    const userId = await requireUser(
-      fakeReq('ntk_bad', 'nope'),
-      res as unknown as VercelResponse,
-    );
+    const userId = await requireUser(fakeReq('ntk_bad', 'nope'), res as unknown as VercelResponse);
     expect(userId).toBeNull();
     expect(res.statusCode).toBe(401);
   });
@@ -172,30 +170,82 @@ describe('unauthorizedResponse', () => {
   });
 });
 
-describe('challenge (built-in human-check)', () => {
+describe('challenge (visual human-check)', () => {
   beforeEach(() => {
     process.env.GLOBAL_SECRET_TOKEN = 'secret-123';
+    clearChallengeNonces();
   });
 
-  it('issues a signed challenge that verifies', () => {
+  /** Recover the HMAC-bound target index without consuming the nonce. */
+  function targetOf(ch: { nonce: string; expires_at: number; sig: string }): number {
+    for (let i = 0; i < 6; i++) {
+      if (signChallenge(ch.nonce, i, ch.expires_at) === ch.sig) return i;
+    }
+    throw new Error('no target index matches — signer/verifier diverged');
+  }
+
+  const human = { elapsedMs: 1500, honeypot: '', interactions: 5 };
+
+  it('issues a 6-tile signed challenge that verifies with the target index', () => {
     const ch = issueChallenge();
-    expect(ch.question).toMatch(/^\d+ \+ \d+ = \?$/);
-    const [a, b] = ch.question
-      .split('=')[0]
-      .split('+')
-      .map((s) => parseInt(s.trim(), 10));
-    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, a + b)).toBe(true);
+    expect(ch.tiles).toHaveLength(6);
+    expect(typeof ch.instruction).toBe('string');
+    expect(ch.instruction.length).toBeGreaterThan(0);
+    expect(ch.question).toBe(ch.instruction);
+    const target = targetOf(ch);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, target, human)).toBe(true);
   });
 
-  it('rejects wrong answers, tampered sigs, and expiries', () => {
+  it('rejects wrong indices, tampered sigs, and expiries', () => {
     const ch = issueChallenge();
-    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, -999)).toBe(false);
-    expect(verifyChallenge(ch.nonce, ch.expires_at, 'deadbeef', 0)).toBe(false);
-    expect(verifyChallenge(ch.nonce, Date.now() - 1000, ch.sig, 0)).toBe(false);
+    const target = targetOf(ch);
+    const wrong = (target + 1) % 6;
+    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, wrong, human)).toBe(false);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, 'deadbeef', target, human)).toBe(false);
+    expect(verifyChallenge(ch.nonce, Date.now() - 1000, ch.sig, target, human)).toBe(false);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, 99, human)).toBe(false);
     // Signature bound to a different secret fails.
-    const other = signChallenge(ch.nonce, 42, ch.expires_at);
+    const other = signChallenge(ch.nonce, target, ch.expires_at);
     process.env.GLOBAL_SECRET_TOKEN = 'different-secret';
-    expect(verifyChallenge(ch.nonce, ch.expires_at, other, 42)).toBe(false);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, other, target, human)).toBe(false);
+  });
+
+  it('rejects instant submits, missing timing, honeypots, and zero-interaction speedruns', () => {
+    const fast = { elapsedMs: 120, honeypot: '', interactions: 5 };
+    const ch1 = issueChallenge();
+    expect(verifyChallenge(ch1.nonce, ch1.expires_at, ch1.sig, targetOf(ch1), fast)).toBe(false);
+
+    const ch2 = issueChallenge();
+    expect(
+      verifyChallenge(ch2.nonce, ch2.expires_at, ch2.sig, targetOf(ch2), {
+        honeypot: '',
+        interactions: 5,
+      }),
+    ).toBe(false);
+
+    const ch3 = issueChallenge();
+    expect(
+      verifyChallenge(ch3.nonce, ch3.expires_at, ch3.sig, targetOf(ch3), {
+        ...human,
+        honeypot: 'http://spam.example',
+      }),
+    ).toBe(false);
+
+    const ch4 = issueChallenge();
+    expect(
+      verifyChallenge(ch4.nonce, ch4.expires_at, ch4.sig, targetOf(ch4), {
+        elapsedMs: 900,
+        honeypot: '',
+        interactions: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it('is single-use: a correct solution cannot be replayed', () => {
+    const ch = issueChallenge();
+    const target = targetOf(ch);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, target, human)).toBe(true);
+    expect(verifyChallenge(ch.nonce, ch.expires_at, ch.sig, target, human)).toBe(false);
   });
 });
 

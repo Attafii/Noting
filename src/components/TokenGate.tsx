@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   BadgeCheck,
@@ -21,6 +21,7 @@ import {
   fetchQuestion,
   mintToken,
   type Challenge,
+  type ChallengeSolution,
 } from '../lib/api';
 import { getSessionId, getToken, setAnswer, setToken } from '../lib/token';
 import { Button } from './ui/button';
@@ -313,8 +314,14 @@ function UnlockForm({
               disabled={!hintAvailable || hintLoading}
               className="flex cursor-pointer items-center gap-1.5 self-start text-xs text-amber-300/90 transition-colors hover:text-amber-200 disabled:cursor-default disabled:opacity-40"
             >
-              {hintLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Lightbulb className="size-3.5" />}
-              {hintAvailable ? 'Forgot? Show hint — once per session' : 'Hint already shown this session'}
+              {hintLoading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Lightbulb className="size-3.5" />
+              )}
+              {hintAvailable
+                ? 'Forgot? Show hint — once per session'
+                : 'Hint already shown this session'}
             </button>
           ) : (
             <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
@@ -344,7 +351,10 @@ function UnlockForm({
 
       <p className="text-center text-xs text-zinc-600">
         No token yet?{' '}
-        <button onClick={onGoGenerate} className="cursor-pointer font-medium text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100">
+        <button
+          onClick={onGoGenerate}
+          className="cursor-pointer font-medium text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+        >
           Create one in seconds
         </button>
       </p>
@@ -356,28 +366,53 @@ function UnlockForm({
 // Generate: label + question + answer + hint + human-check → one-time token.
 // ---------------------------------------------------------------------------
 
-function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => void; initialToken: string | null }) {
+function GenerateForm({
+  onDone,
+  initialToken,
+}: {
+  onDone: (token: string) => void;
+  initialToken: string | null;
+}) {
   const [label, setLabel] = useState('');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [hint, setHint] = useState('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
-  const [solved, setSolved] = useState('');
+  const [selected, setSelected] = useState<number | null>(null);
   const [challengeLoading, setChallengeLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [challengeFailed, setChallengeFailed] = useState(false);
+  const [failCount, setFailCount] = useState(0);
+  const [useTurnstile, setUseTurnstile] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [result, setResult] = useState<{ token: string; question: string } | null>(
     initialToken ? { token: initialToken, question: '' } : null,
   );
   const [copied, setCopied] = useState(false);
   const [savedAck, setSavedAck] = useState(false);
+  // Timing + interaction signals for the human-check (measured from render).
+  const issuedAtRef = useRef(0);
+  const interactionsRef = useRef(0);
 
   const loadChallenge = useCallback(async () => {
     setChallengeLoading(true);
     try {
-      setChallenge(await fetchChallenge());
-      setSolved('');
-    } catch {
-      toast.error('Could not load the human-check — retry in a moment');
+      const ch = await fetchChallenge();
+      setChallenge(Array.isArray(ch.tiles) && ch.tiles.length > 0 ? ch : null);
+      if (!Array.isArray(ch.tiles) || ch.tiles.length === 0) {
+        setChallengeFailed(true);
+      } else {
+        setChallengeFailed(false);
+      }
+      setSelected(null);
+      interactionsRef.current = 0;
+      issuedAtRef.current = Date.now();
+    } catch (e) {
+      setChallenge(null);
+      setChallengeFailed(true);
+      toast.error(
+        e instanceof Error ? e.message : 'Could not load the human-check — retry in a moment',
+      );
     } finally {
       setChallengeLoading(false);
     }
@@ -391,15 +426,6 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
-    if (!challenge) {
-      toast.error('Wait for the human-check to load');
-      return;
-    }
-    const solvedNum = parseInt(solved.trim(), 10);
-    if (!Number.isInteger(solvedNum)) {
-      toast.error('Solve the arithmetic check first');
-      return;
-    }
     if (question.trim().length < 4 || question.trim().length > 140) {
       toast.error('Question must be 4–140 characters');
       return;
@@ -416,6 +442,31 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
       toast.error('Nickname must be 0–40 characters');
       return;
     }
+
+    let solution: ChallengeSolution | undefined;
+    let fallbackToken: string | undefined;
+    if (useTurnstile) {
+      if (!turnstileToken) {
+        toast.error('Complete the alternative check first');
+        return;
+      }
+      fallbackToken = turnstileToken;
+    } else {
+      if (!challenge || selected === null) {
+        toast.error(challenge ? 'Tap the odd tile first' : 'Wait for the human-check to load');
+        return;
+      }
+      solution = {
+        nonce: challenge.nonce,
+        expires_at: challenge.expires_at,
+        sig: challenge.sig,
+        selected,
+        elapsed_ms: Date.now() - issuedAtRef.current,
+        honeypot: '',
+        interactions: interactionsRef.current,
+      };
+    }
+
     setCreating(true);
     try {
       const res = await mintToken({
@@ -423,15 +474,22 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
         question: question.trim(),
         answer: answer.trim(),
         hint: hint.trim() || undefined,
-        challenge: { ...challenge, answer: solvedNum },
+        challenge: solution,
+        turnstileToken: fallbackToken,
       });
       // The form answer is wiped immediately — it is never stored.
       setAnswer('');
-      setSolved('');
+      setSelected(null);
+      setTurnstileToken(null);
+      setFailCount(0);
       setResult({ token: res.token_plaintext, question: res.question });
     } catch (err) {
       if (err instanceof Error && err.message.includes('Human-check')) {
-        await loadChallenge();
+        const next = failCount + 1;
+        setFailCount(next);
+        setSelected(null);
+        setTurnstileToken(null);
+        if (!useTurnstile) await loadChallenge();
       }
       toast.error(err instanceof Error ? err.message : 'Could not create token');
     } finally {
@@ -486,8 +544,8 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
             className="mt-0.5 size-4 accent-amber-400"
           />
           <span>
-            I saved my token <span className="text-zinc-100">and</span> my answer somewhere safe.
-            I understand both are required on every visit and neither can be recovered.
+            I saved my token <span className="text-zinc-100">and</span> my answer somewhere safe. I
+            understand both are required on every visit and neither can be recovered.
           </span>
         </label>
 
@@ -511,6 +569,10 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
             setQuestion('');
             setHint('');
             setLabel('');
+            setSelected(null);
+            setFailCount(0);
+            setUseTurnstile(false);
+            setTurnstileToken(null);
             void loadChallenge();
           }}
           className="cursor-pointer text-center text-xs text-zinc-600 hover:text-zinc-300"
@@ -573,7 +635,8 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
 
         <div className="flex flex-col gap-1.5">
           <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
-            Hint <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
+            Hint{' '}
+            <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
           </label>
           <Input
             placeholder="e.g. the one with the blue door"
@@ -584,42 +647,256 @@ function GenerateForm({ onDone, initialToken }: { onDone: (token: string) => voi
           />
         </div>
 
-        <div className="flex items-center gap-2 rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
-          <div className="min-w-0 flex-1">
+        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
+          <div className="flex items-center gap-2">
             <p className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
-              Quick human-check
+              {useTurnstile ? 'Alternative check' : 'Quick human-check'}
             </p>
-            {challenge ? (
-              <p className="mt-0.5 font-mono text-lg text-zinc-100">{challenge.question}</p>
-            ) : (
-              <p className="mt-0.5 text-xs text-zinc-600">loading…</p>
+            {!useTurnstile && (
+              <button
+                type="button"
+                onClick={() => void loadChallenge()}
+                disabled={challengeLoading}
+                aria-label="New challenge"
+                title="New challenge"
+                className="ml-auto cursor-pointer rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
+              >
+                <RefreshCw className={cn('size-3.5', challengeLoading && 'animate-spin')} />
+              </button>
             )}
           </div>
-          <Input
-            placeholder="= ?"
-            value={solved}
-            onChange={(e) => setSolved(e.target.value)}
-            inputMode="numeric"
-            aria-label="Human-check answer"
-            className="w-20 text-center font-mono"
-          />
-          <button
-            type="button"
-            onClick={() => void loadChallenge()}
-            disabled={challengeLoading}
-            aria-label="New challenge"
-            title="New challenge"
-            className="cursor-pointer rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
-          >
-            <RefreshCw className={cn('size-3.5', challengeLoading && 'animate-spin')} />
-          </button>
+
+          {useTurnstile ? (
+            <div className="mt-2">
+              <TurnstileWidget
+                onVerify={setTurnstileToken}
+                onExpire={() => setTurnstileToken(null)}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setUseTurnstile(false);
+                  setTurnstileToken(null);
+                  void loadChallenge();
+                }}
+                className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
+              >
+                Back to the tile puzzle
+              </button>
+            </div>
+          ) : challenge ? (
+            <>
+              <p className="mt-1 text-[13px] font-medium text-zinc-200">
+                {challenge.instruction || challenge.question || 'Tap the odd one out'}
+              </p>
+              <div
+                role="group"
+                aria-label={challenge.instruction || 'Human-check: tap the odd tile'}
+                className="mt-2.5 grid grid-cols-3 gap-2"
+                onPointerMove={() => {
+                  interactionsRef.current += 1;
+                }}
+              >
+                {challenge.tiles.map((tile, i) => (
+                  <button
+                    key={`${challenge.nonce}-${i}`}
+                    type="button"
+                    onClick={() => {
+                      interactionsRef.current += 1;
+                      setSelected(i);
+                    }}
+                    onKeyDown={() => {
+                      interactionsRef.current += 1;
+                    }}
+                    aria-label={`Tile ${i + 1}: ${tile.label}`}
+                    aria-pressed={selected === i}
+                    className={cn(
+                      'flex cursor-pointer items-center justify-center rounded-lg border py-3 text-2xl transition-all',
+                      selected === i
+                        ? 'border-accent-500/70 bg-accent-500/10 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]'
+                        : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-600 hover:bg-zinc-900',
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={tile.r ? { transform: `rotate(${tile.r}deg)` } : undefined}
+                    >
+                      {tile.g}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {/* Honeypot: invisible to humans, irresistible to autofill bots. */}
+              <input
+                type="text"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                placeholder="Leave this empty"
+                className="pointer-events-none absolute h-px w-px opacity-0"
+                onChange={() => undefined}
+                value=""
+              />
+              {(challengeFailed || failCount >= 2) && (
+                <button
+                  type="button"
+                  onClick={() => setUseTurnstile(true)}
+                  className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
+                >
+                  Having trouble? Use the alternative check
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="mt-1.5">
+              <p className="text-xs text-zinc-600">
+                {challengeLoading ? 'loading…' : 'Could not load the human-check.'}
+              </p>
+              {!challengeLoading && (
+                <div className="mt-2 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void loadChallenge()}
+                    className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUseTurnstile(true)}
+                    className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                  >
+                    Use the alternative check
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        <Button type="submit" variant="accent" disabled={creating || !challenge}>
+        <Button type="submit" variant="accent" disabled={creating || (!useTurnstile && !challenge)}>
           {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
           {creating ? 'Creating…' : 'Create my token'}
         </Button>
       </form>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Turnstile fallback widget (Cloudflare, free Managed mode). The script is
+// injected ONLY when the user opts into the alternative check — the happy
+// path loads zero third-party code.
+// ---------------------------------------------------------------------------
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        container: string | HTMLElement,
+        params: {
+          sitekey: string;
+          theme?: 'light' | 'dark' | 'auto';
+          callback?: (token: string) => void;
+          'expired-callback'?: () => void;
+          'error-callback'?: () => void;
+        },
+      ) => string;
+      reset?: (widgetId?: string) => void;
+      remove?: (widgetId?: string) => void;
+    };
+  }
+}
+
+const TURNSTILE_SCRIPT_ID = 'cf-turnstile-script';
+const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+
+function loadTurnstileScript(): Promise<void> {
+  if (typeof document === 'undefined') return Promise.reject(new Error('No document'));
+  if (window.turnstile) return Promise.resolve();
+  const existing = document.getElementById(TURNSTILE_SCRIPT_ID);
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load check')), {
+        once: true,
+      });
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.id = TURNSTILE_SCRIPT_ID;
+    script.src = TURNSTILE_SRC;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load the alternative check'));
+    document.head.appendChild(script);
+  });
+}
+
+function TurnstileWidget({
+  onVerify,
+  onExpire,
+}: {
+  onVerify: (token: string) => void;
+  onExpire: () => void;
+}) {
+  const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY as string | undefined;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!sitekey) return;
+    let cancelled = false;
+    let widgetId: string | undefined;
+    void loadTurnstileScript()
+      .then(() => {
+        if (cancelled || !containerRef.current || !window.turnstile) return;
+        containerRef.current.innerHTML = '';
+        widgetId = window.turnstile.render(containerRef.current, {
+          sitekey,
+          theme: 'dark',
+          callback: (token: string) => {
+            if (!cancelled) onVerify(token);
+          },
+          'expired-callback': () => {
+            if (!cancelled) onExpire();
+          },
+          'error-callback': () => {
+            if (!cancelled) setFailed(true);
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      try {
+        if (widgetId !== undefined) window.turnstile?.remove?.(widgetId);
+      } catch {
+        /* ignore cleanup errors */
+      }
+    };
+    // onVerify/onExpire are stable setState wrappers — render once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sitekey]);
+
+  if (!sitekey) {
+    return (
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+        The alternative check isn’t configured on this deployment (missing site key). Please use the
+        tile puzzle instead.
+      </p>
+    );
+  }
+  if (failed) {
+    return (
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+        Couldn’t load the alternative check — check your connection and try the tile puzzle.
+      </p>
+    );
+  }
+  return <div ref={containerRef} className="cf-turnstile mt-2 min-h-16" />;
 }

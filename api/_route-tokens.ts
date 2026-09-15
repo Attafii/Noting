@@ -9,6 +9,7 @@ import {
   normalizeAnswer,
   verifyChallenge,
 } from './_auth';
+import { verifyTurnstile } from './_turnstile';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
 
@@ -64,13 +65,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     question?: unknown;
     answer?: unknown;
     hint?: unknown;
-    challenge?: { nonce?: unknown; expires_at?: unknown; sig?: unknown; answer?: unknown };
+    challenge?: {
+      nonce?: unknown;
+      expires_at?: unknown;
+      sig?: unknown;
+      selected?: unknown;
+      elapsed_ms?: unknown;
+      honeypot?: unknown;
+      interactions?: unknown;
+    };
+    turnstileToken?: unknown;
   };
 
+  // Primary: built-in visual human-check. Fallback: Cloudflare Turnstile
+  // (lazy widget, only when the user opts in after the custom check fails).
   const ch = body.challenge ?? {};
-  if (!verifyChallenge(ch.nonce, ch.expires_at, ch.sig, ch.answer)) {
-    res.status(400).json({ error: 'Human-check failed — solve a fresh challenge and retry' });
-    return;
+  const customOk = verifyChallenge(ch.nonce, ch.expires_at, ch.sig, ch.selected, {
+    elapsedMs: ch.elapsed_ms,
+    honeypot: ch.honeypot,
+    interactions: ch.interactions,
+  });
+  if (!customOk) {
+    const fallbackOk =
+      typeof body.turnstileToken === 'string' && body.turnstileToken.length > 0
+        ? await verifyTurnstile(body.turnstileToken)
+        : false;
+    if (!fallbackOk) {
+      res.status(400).json({ error: 'Human-check failed — solve a fresh challenge and retry' });
+      return;
+    }
   }
 
   const question = cleanStr(body.question, 140);

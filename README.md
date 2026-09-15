@@ -32,6 +32,7 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
    - `GLOBAL_SECRET_TOKEN` — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
    - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
+   - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → Add widget → Managed mode → hostnames `noting-notes.vercel.app` (+ `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget.
 3. Database (one time, plus each new migration in order):
    - `psql $NEON_CONNECTION_STRING -f db/schema.sql`
    - `psql $NEON_CONNECTION_STRING -f db/migrate-001.sql`
@@ -79,12 +80,14 @@ All endpoints except `/api/health` require the `x-bridge-token: <GLOBAL_SECRET_T
 | GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                     |
 | POST                  | `/api/ai`            | Format text via OpenRouter; returns original + warning on failure                                                                           |
 | POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                     |
+| GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                   |
+| POST                  | `/api/tokens`        | Self-service mint (visual human-check OR Turnstile fallback; returns `ntk_…` once)                                                          |
 
-Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI.
+Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint.
 
 ## Deployment (Vercel)
 
-Set `GLOBAL_SECRET_TOKEN`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. `vercel.json` handles SPA rewrites, API passthrough, upload memory, and security headers.
+Set `GLOBAL_SECRET_TOKEN`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, and security headers.
 
 ## Security model
 
@@ -97,6 +100,7 @@ Single static bearer token, no accounts. Anyone holding the token has full acces
 - Rate limits are DB-backed so they survive cold starts; CI blocks committed secrets (`sk-or-v1`, `npg_`, private keys).
 - Backup imports are pre-scanned against zip-bomb limits (25MB per file, 100MB total).
 - RAG answers are instructed to treat document excerpts as untrusted data, wrapped in `<documents>` tags.
+- Token minting is gated by a built-in visual human-check (tap-the-odd-tile, HMAC-signed, single-use nonces, 800ms timing gate, honeypot — no vendor, no tracking). If the custom check can't load or keeps failing, the UI offers a Cloudflare Turnstile (free Managed) fallback that is lazy-loaded only on demand; the happy path loads zero third-party code.
 
 Optional end-to-end encryption (Settings → toggle) encrypts note bodies and file bytes in the browser with AES-GCM-256, using a key derived from the access token (`SHA-256("noting-e2e:" + token)`). The server and Neon then only ever see ciphertext. Threat-model notes:
 

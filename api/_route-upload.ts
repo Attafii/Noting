@@ -1,9 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import busboy from 'busboy';
 import { resolveAuth } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
-import { indexDocument } from './_index';
 import { getSql } from '../src/lib/db';
+
+// NOTE: `busboy` and `./_index` are deliberately NOT statically imported.
+// They load lazily inside the handler so a packaging/import failure in the
+// multipart parser or the RAG indexer can only break /api/upload — never the
+// shared router bundle (challenge/health/tokens stay up).
 
 const MAX_BYTES = 4.5 * 1024 * 1024;
 
@@ -36,7 +39,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const bb = busboy({ headers: req.headers, limits: { files: 1, fileSize: MAX_BYTES } });
+  interface BusboyLike {
+    on(event: 'field', listener: (fieldname: string, value: string) => void): void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    on(event: 'file', listener: (fieldname: string, file: any, info: any) => void): void;
+    on(event: 'finish', listener: () => void): void;
+    on(event: 'error', listener: () => void): void;
+  }
+  let bb: BusboyLike;
+  try {
+    const mod = (await import('busboy')) as unknown as {
+      default?: (opts: unknown) => BusboyLike;
+    } & ((opts: unknown) => BusboyLike);
+    const ctor = typeof mod.default === 'function' ? mod.default : mod;
+    if (typeof ctor !== 'function') throw new Error('busboy export is not a constructor');
+    bb = (ctor as (opts: unknown) => BusboyLike)({
+      headers: req.headers,
+      limits: { files: 1, fileSize: MAX_BYTES },
+    });
+  } catch (e) {
+    console.error('upload parser unavailable', e);
+    res.status(500).json({ error: 'Upload unavailable — try again' });
+    return;
+  }
   let fileBuffer: Buffer | null = null;
   let fileName = '';
   let fileType = '';
@@ -97,9 +122,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await sql
         .query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id TEXT')
         .catch(() => undefined);
+      const bytes = fileBuffer;
       const rows = await sql.query(
         'INSERT INTO documents (file_name, file_type, file_data, enc, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at',
-        [fileName, fileType, fileBuffer, encrypted, userId],
+        [fileName, fileType, bytes, encrypted, userId],
       );
       responded = true;
       const doc = rows[0];
@@ -107,10 +133,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // RAG indexing is best-effort and runs after the response so uploads
       // stay fast; it no-ops for encrypted or non-text files, and verifies
       // the document owner before embedding (per-user isolation).
+      // Lazily imported so indexer failures can't break the upload bundle.
       const docId = doc.id as number;
-      void indexDocument(docId, fileName, fileType, fileBuffer, encrypted, userId).catch((e) =>
-        console.error('indexing error', e),
-      );
+      void import('./_index')
+        .then((m) => m.indexDocument(docId, fileName, fileType, bytes, encrypted, userId))
+        .catch((e) => console.error('indexing error', e));
     } catch (e) {
       console.error('upload error', e);
       fail(500, 'Upload failed');
@@ -125,7 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     responded = true;
   });
 
-  req.pipe(bb);
+  req.pipe(bb as unknown as NodeJS.WritableStream);
 }
 
 /** Strip path components and control characters from client-supplied names. */
