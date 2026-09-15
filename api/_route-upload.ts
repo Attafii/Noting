@@ -134,8 +134,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // stay fast; it no-ops for encrypted or non-text files, and verifies
       // the document owner before embedding (per-user isolation).
       // Lazily imported so indexer failures can't break the upload bundle.
+      // NOTE: `.js` extension is required — extensionless relative dynamic
+      // imports throw ERR_MODULE_NOT_FOUND on Vercel Node ESM
+      // (`"type": "module"`), silently disabling indexing in prod.
       const docId = doc.id as number;
-      void import('./_index')
+      void import('./_index.js')
         .then((m) => m.indexDocument(docId, fileName, fileType, bytes, encrypted, userId))
         .catch((e) => console.error('indexing error', e));
     } catch (e) {

@@ -1,8 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import aiHandler from './_route-ai';
+import askHandler from './_route-ask';
+import challengeHandler from './_route-challenge';
+import documentsHandler from './_route-documents';
+import downloadHandler from './_route-download';
+import foldersHandler from './_route-folders';
+import healthHandler from './_route-health';
+import hintHandler from './_route-hint';
+import noteHandler from './_route-note';
+import notesHandler from './_route-notes';
+import revisionsHandler from './_route-revisions';
+import tokenQuestionHandler from './_route-token-question';
+import tokensHandler from './_route-tokens';
+import uploadHandler from './_route-upload';
+import usageHandler from './_route-usage';
 
 type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void;
-type HandlerModule = { default: Handler };
-type Loader = () => Promise<HandlerModule>;
 
 /**
  * Single-function API router (Vercel Hobby plans allow max 12 Serverless
@@ -10,30 +23,35 @@ type Loader = () => Promise<HandlerModule>;
  * `/api/<name>` → `/api/router?route=<name>` (see vercel.json); local dev
  * resolves the `_route-*` modules directly via dev-api.ts.
  *
- * Hardening: handlers are LAZY-loaded per request (dynamic import), never
- * statically imported at the top of this file. A crashing third-party import
- * in one route (e.g. busboy in upload, OpenRouter/pgvector in index) must
- * only break that route — never challenge/health/everything at once. This
- * was the root cause of simultaneous 500s on DB-free (/challenge) and
- * DB-backed (/health) endpoints: one top-level import throwing killed the
- * whole shared bundle.
+ * Hardening: handlers are STATICALLY imported (bundled into this single
+ * function at build time). The previous lazy `import('./_route-…')` without
+ * a file extension works under Vite/vitest (`moduleResolution: bundler`)
+ * but fails at runtime on Vercel Node ESM (`"type": "module"`), where a
+ * relative dynamic import without `.js` throws ERR_MODULE_NOT_FOUND —
+ * taking down EVERY route (including DB-free /challenge and /health) with
+ * a generic `{"error":"Internal server error"}`. Static imports are
+ * resolved by the bundler, so they cannot fail at request time.
+ *
+ * Heavy/optional deps (busboy, RAG indexer) stay lazily imported INSIDE
+ * their handlers (see _route-upload.ts), so a packaging failure there can
+ * still only break /api/upload — never challenge/health/everything at once.
  */
-const LOADERS: Record<string, Loader> = {
-  ai: () => import('./_route-ai'),
-  ask: () => import('./_route-ask'),
-  challenge: () => import('./_route-challenge'),
-  documents: () => import('./_route-documents'),
-  download: () => import('./_route-download'),
-  folders: () => import('./_route-folders'),
-  health: () => import('./_route-health'),
-  hint: () => import('./_route-hint'),
-  note: () => import('./_route-note'),
-  notes: () => import('./_route-notes'),
-  revisions: () => import('./_route-revisions'),
-  'token-question': () => import('./_route-token-question'),
-  tokens: () => import('./_route-tokens'),
-  upload: () => import('./_route-upload'),
-  usage: () => import('./_route-usage'),
+const HANDLERS: Record<string, Handler> = {
+  ai: aiHandler,
+  ask: askHandler,
+  challenge: challengeHandler,
+  documents: documentsHandler,
+  download: downloadHandler,
+  folders: foldersHandler,
+  health: healthHandler,
+  hint: hintHandler,
+  note: noteHandler,
+  notes: notesHandler,
+  revisions: revisionsHandler,
+  'token-question': tokenQuestionHandler,
+  tokens: tokensHandler,
+  upload: uploadHandler,
+  usage: usageHandler,
 };
 
 /**
@@ -45,7 +63,7 @@ const LOADERS: Record<string, Loader> = {
 function resolveRoute(req: VercelRequest): string | null {
   const raw = req.query.route;
   const fromQuery = Array.isArray(raw) ? raw[0] : raw;
-  if (typeof fromQuery === 'string' && LOADERS[fromQuery]) return fromQuery;
+  if (typeof fromQuery === 'string' && HANDLERS[fromQuery]) return fromQuery;
 
   try {
     const url = String((req as { url?: unknown }).url ?? '');
@@ -54,7 +72,7 @@ function resolveRoute(req: VercelRequest): string | null {
     const candidate = m?.[1] ?? null;
     // `router` itself carries the real name in ?route= — already handled
     // above; anything else must be a known route.
-    if (candidate && candidate !== 'router' && LOADERS[candidate]) return candidate;
+    if (candidate && candidate !== 'router' && HANDLERS[candidate]) return candidate;
   } catch {
     /* ignore — caller returns 404 */
   }
@@ -63,22 +81,9 @@ function resolveRoute(req: VercelRequest): string | null {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = resolveRoute(req);
-  const load = (route && LOADERS[route]) || null;
-  if (!route || !load) {
+  const fn = (route && HANDLERS[route]) || null;
+  if (!route || !fn) {
     res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  let fn: Handler;
-  try {
-    const mod = await load();
-    fn = mod.default;
-    if (typeof fn !== 'function') throw new Error(`route "${route}" has no default handler`);
-  } catch (e) {
-    // Import-time crash isolated to this route — everything else stays up.
-    console.error(`api router: loader for "${route}" threw`, e);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error' });
-    }
     return;
   }
   try {
