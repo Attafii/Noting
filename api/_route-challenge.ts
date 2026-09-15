@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { issueChallenge } from './_auth';
+import { issueChallenge } from './_challenge';
 import { enforceRateLimit, memoryStore } from './_ratelimit';
 
 /**

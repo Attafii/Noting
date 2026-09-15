@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/api/challenge", "destination": "/api/challenge" },
+    { "source": "/api/health", "destination": "/api/health" },
     { "source": "/api/(.*)", "destination": "/api/router?route=$1" },
     { "source": "/((?!api).*)", "destination": "/index.html" }
   ],
@@ -20,6 +22,8 @@
     }
   ],
   "functions": {
-    "api/router.ts": { "memory": 1024, "maxDuration": 30 }
+    "api/router.ts": { "memory": 1024, "maxDuration": 30 },
+    "api/challenge.ts": { "memory": 256, "maxDuration": 10 },
+    "api/health.ts": { "memory": 256, "maxDuration": 10 }
   }
 }

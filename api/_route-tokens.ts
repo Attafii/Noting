@@ -7,8 +7,8 @@ import {
   newTokenPlaintext,
   newUserId,
   normalizeAnswer,
-  verifyChallenge,
 } from './_auth';
+import { verifyChallenge } from './_challenge';
 import { verifyTurnstile } from './_turnstile';
 import { enforceRateLimit } from './_ratelimit';
 import { getSql } from '../src/lib/db';
