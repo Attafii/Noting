@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { motion } from 'motion/react';
 import {
@@ -17,6 +18,10 @@ export const Route = createFileRoute('/welcome')({
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 function WelcomePage() {
+  useEffect(() => {
+    document.title = 'noting';
+  }, []);
+
   return (
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-3xl items-center justify-between px-4 py-5 sm:px-6">

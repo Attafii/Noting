@@ -14,8 +14,8 @@ vi.mock('./_ratelimit', () => ({
   enforceRateLimit: (...args: unknown[]) => mockRateLimit(...args),
 }));
 
-import hintHandler from './hint';
-import questionHandler from './token-question';
+import hintHandler from './_route-hint';
+import questionHandler from './_route-token-question';
 
 const SESSION = 'Abc123_-xyzABC45';
 

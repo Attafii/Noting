@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e8c26a"/>
+      <stop offset="1" stop-color="#c99a3f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="0%" r="80%">
+      <stop offset="0" stop-color="#3f3f46" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#3f3f46" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#09090b"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <!-- mark -->
+  <g transform="translate(140,175)">
+    <rect width="280" height="280" rx="64" fill="#101013"/>
+    <rect x="9" y="9" width="262" height="262" rx="56" fill="none" stroke="#27272a" stroke-width="10"/>
+    <path d="M92 96 L148 140 L92 184" fill="none" stroke="url(#gold)" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="160" y1="189" x2="204" y2="189" stroke="#fafafa" stroke-width="25" stroke-linecap="round"/>
+  </g>
+  <!-- wordmark -->
+  <text x="470" y="320" font-family="'Segoe UI', Arial, sans-serif" font-size="128" font-weight="600" letter-spacing="-2" fill="#fafafa">noting</text>
+  <text x="472" y="382" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="30" letter-spacing="6" fill="#71717a">A QUIET PLACE FOR LOUD THOUGHTS</text>
+  <text x="472" y="428" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" fill="#a1a1aa">notes · files · answers — one private workspace</text>
+</svg>

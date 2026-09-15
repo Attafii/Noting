@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Download, Loader2, Upload } from 'lucide-react';
@@ -42,6 +42,10 @@ const ACCENTS: { key: AccentName; label: string; dot: string }[] = [
 ];
 
 function SettingsPage() {
+  useEffect(() => {
+    document.title = 'noting-Settings';
+  }, []);
+
   const token = getToken();
   const theme = useTheme();
   const e2e = useE2E();

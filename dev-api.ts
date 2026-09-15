@@ -48,10 +48,25 @@ export function vercelApiBridge(): Plugin {
           }
 
           let handler: unknown;
-          try {
-            const mod = await server.ssrLoadModule(path.join(rootDir, 'api', `${route}.ts`));
-            handler = mod.default;
-          } catch {
+          // Production serves every endpoint through the single
+          // api/router.ts function; locally, load the `_route-*` module
+          // directly (keeps per-endpoint stack traces in dev).
+          const candidates = [
+            path.join(rootDir, 'api', `${route}.ts`),
+            path.join(rootDir, 'api', `_route-${route}.ts`),
+          ];
+          let loaded = false;
+          for (const candidate of candidates) {
+            try {
+              const mod = await server.ssrLoadModule(candidate);
+              handler = mod.default;
+              loaded = true;
+              break;
+            } catch {
+              /* try next candidate */
+            }
+          }
+          if (!loaded) {
             res.statusCode = 404;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ error: 'Not found' }));

@@ -20,13 +20,13 @@ vi.mock('./_auth', async (importOriginal) => {
   return { ...mod, requireUser: mockRequireUser };
 });
 
-import notesHandler from './notes';
-import noteHandler from './note';
-import foldersHandler from './folders';
-import documentsHandler from './documents';
-import downloadHandler from './download';
-import revisionsHandler from './revisions';
-import usageHandler from './usage';
+import notesHandler from './_route-notes';
+import noteHandler from './_route-note';
+import foldersHandler from './_route-folders';
+import documentsHandler from './_route-documents';
+import downloadHandler from './_route-download';
+import revisionsHandler from './_route-revisions';
+import usageHandler from './_route-usage';
 
 function req(
   method: string,

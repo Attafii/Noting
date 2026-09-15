@@ -26,6 +26,10 @@ export const Route = createFileRoute('/')({
 const SELECTED_KEY = 'selected-note-id';
 
 function IndexComponent() {
+  useEffect(() => {
+    document.title = 'noting-Notes';
+  }, []);
+
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // The answer lives in memory only: a remembered token alone never unlocks.

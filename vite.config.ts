@@ -13,18 +13,24 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Notes',
-        short_name: 'Notes',
-        description: 'Personal cross-device notes bridge',
+        name: 'noting',
+        short_name: 'noting',
+        description: 'noting — a quiet place for loud thoughts',
         theme_color: '#09090b',
         background_color: '#09090b',
         display: 'standalone',
         start_url: '/',
         icons: [
           {
-            src: 'icon.svg',
+            src: 'favicon.svg',
             sizes: 'any',
             type: 'image/svg+xml',
+            purpose: 'any',
+          },
+          {
+            src: 'apple-touch-icon.png',
+            sizes: '180x180',
+            type: 'image/png',
             purpose: 'any',
           },
         ],

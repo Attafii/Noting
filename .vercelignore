@@ -1,0 +1,4 @@
+# Unit tests are executed locally/CI by vitest — never deploy them as
+# Serverless Functions, and keep the deployment under the function count
+# limit (production API runs through the single api/router.ts function).
+**/*.test.ts

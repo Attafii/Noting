@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/api/(.*)", "destination": "/api/router?route=$1" },
     { "source": "/((?!api).*)", "destination": "/index.html" }
   ],
   "headers": [
@@ -20,8 +20,6 @@
     }
   ],
   "functions": {
-    "api/upload.ts": { "memory": 1024 },
-    "api/ai.ts": { "maxDuration": 30 },
-    "api/ask.ts": { "maxDuration": 30 }
+    "api/router.ts": { "memory": 1024, "maxDuration": 30 }
   }
 }
