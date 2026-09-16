@@ -383,7 +383,15 @@ function GenerateForm({
   const [creating, setCreating] = useState(false);
   const [challengeFailed, setChallengeFailed] = useState(false);
   const [failCount, setFailCount] = useState(0);
-  const [useTurnstile, setUseTurnstile] = useState(false);
+  // Cloudflare-first: when the sitekey is configured the Turnstile widget is
+  // the primary human-check (the tile puzzle stays as fallback). Starting in
+  // Turnstile mode also means a broken /api/challenge can no longer block
+  // token creation — no challenge is fetched until the user opts back.
+  const [useTurnstile, setUseTurnstile] = useState<boolean>(
+    () => Boolean(import.meta.env.VITE_TURNSTILE_SITEKEY) === true,
+  );
+  // Bumped to remount the widget (fresh token) after a failed/used attempt.
+  const [turnstileKey, setTurnstileKey] = useState(0);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [result, setResult] = useState<{ token: string; question: string } | null>(
     initialToken ? { token: initialToken, question: '' } : null,
@@ -419,10 +427,12 @@ function GenerateForm({
   }, []);
 
   useEffect(() => {
-    // One-time initial fetch of the human-check (user can refresh manually).
+    // Only fetch the tile puzzle when it is actually shown. In Turnstile
+    // mode no /api/challenge request fires at all.
+    if (useTurnstile) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadChallenge();
-  }, [loadChallenge]);
+  }, [loadChallenge, useTurnstile]);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -489,7 +499,10 @@ function GenerateForm({
         setFailCount(next);
         setSelected(null);
         setTurnstileToken(null);
+        // Fresh check for the retry: new tiles, or a remounted widget (the
+        // spent Turnstile token can't be reused).
         if (!useTurnstile) await loadChallenge();
+        else setTurnstileKey((k) => k + 1);
       }
       toast.error(err instanceof Error ? err.message : 'Could not create token');
     } finally {
@@ -571,9 +584,11 @@ function GenerateForm({
             setLabel('');
             setSelected(null);
             setFailCount(0);
-            setUseTurnstile(false);
             setTurnstileToken(null);
-            void loadChallenge();
+            // Stay in the working mode: fresh widget for Turnstile, fresh
+            // tiles otherwise (no forced /api/challenge call in Turnstile mode).
+            if (useTurnstile) setTurnstileKey((k) => k + 1);
+            else void loadChallenge();
           }}
           className="cursor-pointer text-center text-xs text-zinc-600 hover:text-zinc-300"
         >
@@ -650,7 +665,7 @@ function GenerateForm({
         <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
           <div className="flex items-center gap-2">
             <p className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
-              {useTurnstile ? 'Alternative check' : 'Quick human-check'}
+              {useTurnstile ? 'Human-check' : 'Tile puzzle (fallback)'}
             </p>
             {!useTurnstile && (
               <button
@@ -669,6 +684,7 @@ function GenerateForm({
           {useTurnstile ? (
             <div className="mt-2">
               <TurnstileWidget
+                key={turnstileKey}
                 onVerify={setTurnstileToken}
                 onExpire={() => setTurnstileToken(null)}
               />
@@ -774,7 +790,13 @@ function GenerateForm({
           )}
         </div>
 
-        <Button type="submit" variant="accent" disabled={creating || (!useTurnstile && !challenge)}>
+        <Button
+          type="submit"
+          variant="accent"
+          disabled={
+            creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)
+          }
+        >
           {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
           {creating ? 'Creating…' : 'Create my token'}
         </Button>
@@ -784,9 +806,9 @@ function GenerateForm({
 }
 
 // ---------------------------------------------------------------------------
-// Turnstile fallback widget (Cloudflare, free Managed mode). The script is
-// injected ONLY when the user opts into the alternative check — the happy
-// path loads zero third-party code.
+// Turnstile widget (Cloudflare, free Managed mode). Primary human-check when
+// VITE_TURNSTILE_SITEKEY is configured — the script is injected only when
+// the widget mounts, and the tile puzzle remains as fallback.
 // ---------------------------------------------------------------------------
 
 declare global {
@@ -809,13 +831,20 @@ declare global {
 }
 
 const TURNSTILE_SCRIPT_ID = 'cf-turnstile-script';
-const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+// render=explicit: the widget is always rendered manually via
+// turnstile.render(). This stops api.js from auto-scanning the DOM, which
+// caused "Turnstile skipped implicit render because a widget already exists"
+// when the explicit render raced the implicit one.
+const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 function loadTurnstileScript(): Promise<void> {
   if (typeof document === 'undefined') return Promise.reject(new Error('No document'));
   if (window.turnstile) return Promise.resolve();
-  const existing = document.getElementById(TURNSTILE_SCRIPT_ID);
+  const existing = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null;
   if (existing) {
+    // Script tag from an earlier mount that already finished loading — the
+    // load event below would never fire again, so resolve immediately.
+    if (existing.dataset.loaded === '1') return Promise.resolve();
     return new Promise((resolve, reject) => {
       existing.addEventListener('load', () => resolve(), { once: true });
       existing.addEventListener('error', () => reject(new Error('Failed to load check')), {
@@ -829,7 +858,10 @@ function loadTurnstileScript(): Promise<void> {
     script.src = TURNSTILE_SRC;
     script.async = true;
     script.defer = true;
-    script.onload = () => resolve();
+    script.onload = () => {
+      script.dataset.loaded = '1';
+      resolve();
+    };
     script.onerror = () => reject(new Error('Failed to load the alternative check'));
     document.head.appendChild(script);
   });
@@ -850,11 +882,20 @@ function TurnstileWidget({
     if (!sitekey) return;
     let cancelled = false;
     let widgetId: string | undefined;
+    const container = containerRef.current;
     void loadTurnstileScript()
       .then(() => {
-        if (cancelled || !containerRef.current || !window.turnstile) return;
-        containerRef.current.innerHTML = '';
-        widgetId = window.turnstile.render(containerRef.current, {
+        if (cancelled || !container || !window.turnstile) return;
+        // StrictMode double-mounts effects: the first mount's widget may
+        // still own this container. Tear it down first so render() never
+        // no-ops into a blank box.
+        try {
+          if (widgetId !== undefined) window.turnstile.remove?.(widgetId);
+        } catch {
+          /* ignore */
+        }
+        container.innerHTML = '';
+        widgetId = window.turnstile.render(container, {
           sitekey,
           theme: 'dark',
           callback: (token: string) => {
@@ -878,6 +919,13 @@ function TurnstileWidget({
       } catch {
         /* ignore cleanup errors */
       }
+      // Leave a clean container so the next mount renders fresh instead of
+      // hitting "a widget already exists in this container".
+      try {
+        container?.replaceChildren();
+      } catch {
+        /* ignore cleanup errors */
+      }
     };
     // onVerify/onExpire are stable setState wrappers — render once per mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -898,5 +946,8 @@ function TurnstileWidget({
       </p>
     );
   }
-  return <div ref={containerRef} className="cf-turnstile mt-2 min-h-16" />;
+  // NOTE: the container deliberately does NOT use the `cf-turnstile` CSS
+  // class — api.js auto-renders those implicitly, which raced our explicit
+  // render() and produced blank widgets.
+  return <div ref={containerRef} className="turnstile-slot mt-2 min-h-16" />;
 }

@@ -122,8 +122,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const salt = newSaltHex();
   const answerHash = hashAnswer(normalizeAnswer(answerRaw), salt);
 
+  let sql: ReturnType<typeof getSql>;
   try {
-    const sql = getSql();
+    sql = getSql();
+  } catch (e) {
+    // Missing/unreadable NEON_CONNECTION_STRING — the only 503 in this
+    // handler, so Vercel logs + the client message identify a DB-config
+    // outage (not a human-check failure).
+    console.error('tokens mint: database unavailable (NEON_CONNECTION_STRING)', e);
+    res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+    return;
+  }
+  try {
     await ensureTables(sql).catch(() => undefined);
     await sql.query(
       'INSERT INTO access_tokens (id, token_hash, label, question, answer_hash, answer_salt, hint) VALUES ($1, $2, $3, $4, $5, $6, $7)',

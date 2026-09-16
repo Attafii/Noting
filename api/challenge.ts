@@ -52,7 +52,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).json(issueChallenge());
   } catch (e) {
-    console.error('challenge handler failed', e);
+    // Tagged log ID so Vercel runtime logs identify THIS standalone function
+    // (not the shared router) as the 500 source.
+    console.error('standalone /api/challenge handler failed', e);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Could not issue challenge — try again' });
     }
