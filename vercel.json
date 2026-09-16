@@ -2,9 +2,11 @@
   "rewrites": [
     { "source": "/api/ai", "destination": "/api/router?route=ai" },
     { "source": "/api/ask", "destination": "/api/router?route=ask" },
+    { "source": "/api/challenge", "destination": "/api/router?route=challenge" },
     { "source": "/api/documents", "destination": "/api/router?route=documents" },
     { "source": "/api/download", "destination": "/api/router?route=download" },
     { "source": "/api/folders", "destination": "/api/router?route=folders" },
+    { "source": "/api/health", "destination": "/api/router?route=health" },
     { "source": "/api/hint", "destination": "/api/router?route=hint" },
     { "source": "/api/note", "destination": "/api/router?route=note" },
     { "source": "/api/notes", "destination": "/api/router?route=notes" },
