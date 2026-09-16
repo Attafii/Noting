@@ -894,7 +894,10 @@ function TurnstileWidget({
         } catch {
           /* ignore */
         }
-        container.innerHTML = '';
+        // Belt and braces: if an iframe survived cleanup (stale remount),
+        // drop it before the explicit render.
+        if (container.querySelector('iframe')) container.replaceChildren();
+        else container.innerHTML = '';
         widgetId = window.turnstile.render(container, {
           sitekey,
           theme: 'dark',

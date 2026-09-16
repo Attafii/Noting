@@ -23,8 +23,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  let sql: ReturnType<typeof getSql>;
   try {
-    const sql = getSql();
+    sql = getSql();
+  } catch (e) {
+    // Same DB-unavailable contract as POST /api/tokens: a missing/dead
+    // NEON_CONNECTION_STRING surfaces as 503 (config outage), never as a
+    // generic 500 that looks like an auth failure.
+    console.error('token-question: database unavailable (NEON_CONNECTION_STRING)', e);
+    res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+    return;
+  }
+
+  try {
     const rows = await sql.query('SELECT id, question FROM access_tokens WHERE token_hash = $1', [
       hashToken(token),
     ]);

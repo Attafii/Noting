@@ -27,8 +27,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  let sql: ReturnType<typeof getSql>;
   try {
-    const sql = getSql();
+    sql = getSql();
+  } catch (e) {
+    // Same DB-unavailable contract as the other public token routes.
+    console.error('hint: database unavailable (NEON_CONNECTION_STRING)', e);
+    res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+    return;
+  }
+
+  try {
     const rows = await sql.query('SELECT id, hint FROM access_tokens WHERE token_hash = $1', [
       hashToken(token),
     ]);
