@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { getSql } from '../src/lib/db';
+import { getSql } from '../src/lib/db.js';
 
 /**
  * Per-user token auth + blind admin.
@@ -155,9 +155,8 @@ export function notFoundResponse(res: VercelResponse): void {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in human-check lives in ./_challenge (pure, node:crypto only) so the
-// standalone api/challenge.ts bundle never pulls in Neon/DB deps. Re-exported
-// here so existing imports (routes, tests) keep working unchanged.
+// Built-in human-check lives in ./_challenge.js (pure, node:crypto only).
+// Re-exported here so existing imports (routes, tests) keep working unchanged.
 // ---------------------------------------------------------------------------
 export {
   CHALLENGE_TILE_COUNT,
@@ -167,8 +166,8 @@ export {
   issueChallenge,
   signChallenge,
   verifyChallenge,
-} from './_challenge';
-export type { Challenge, ChallengeTile, ChallengeVerifyOptions } from './_challenge';
+} from './_challenge.js';
+export type { Challenge, ChallengeTile, ChallengeVerifyOptions } from './_challenge.js';
 
 // ---------------------------------------------------------------------------
 // Token minting helpers (used by POST /api/tokens).

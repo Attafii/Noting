@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { issueChallenge } from './_challenge';
-import { enforceRateLimit, memoryStore } from './_ratelimit';
+import { issueChallenge } from './_challenge.js';
+import { enforceRateLimit, memoryStore } from './_ratelimit.js';
 
 /**
  * Built-in human-check issuer. No auth, strict rate limit, no cookies,

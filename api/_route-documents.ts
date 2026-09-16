@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { getSql } from '../src/lib/db';
+import { requireUser } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { getSql } from '../src/lib/db.js';
 
 const ACTIVE_COLUMNS =
   'id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at';

@@ -6,10 +6,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  * no tracking, no cookies, no IP log.
  *
  * Deliberately dependency-free (only node:crypto): this module must NEVER
- * import ../src/lib/db, ./_ratelimit, or any DB/AI helper, so the standalone
- * api/challenge.ts function bundles to a few KB and cannot be taken down by
- * a packaging failure in Neon/OpenRouter/busboy (the /api/challenge 500
- * class of outage — FUNCTION_INVOCATION_FAILED on the shared router).
+ * import ../src/lib/db, ./_ratelimit, or any DB/AI helper, keeping the
+ * human-check path light no matter which route serves it.
  *
  * Why visual instead of arithmetic: `7 + 12 = ?` is solvable by any
  * text-only bot (curl + LLM) with zero rendering. The tile puzzle requires

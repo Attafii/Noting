@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { resolveAuth } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { getSql } from '../src/lib/db';
+import { resolveAuth } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { getSql } from '../src/lib/db.js';
 
 // NOTE: `busboy` and `./_index` are deliberately NOT statically imported.
 // They load lazily inside the handler so a packaging/import failure in the

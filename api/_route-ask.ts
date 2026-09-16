@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { aiConfigured, chatComplete, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai';
-import { getSql } from '../src/lib/db';
+import { requireUser } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { aiConfigured, chatComplete, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai.js';
+import { getSql } from '../src/lib/db.js';
 
 const TOP_K = 6;
 

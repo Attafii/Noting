@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { hashToken, isValidSessionId } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { isColdStartError, withQueryTimeout } from './_timeout';
-import { getSql } from '../src/lib/db';
+import { hashToken, isValidSessionId } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { isColdStartError, withQueryTimeout } from './_timeout.js';
+import { getSql } from '../src/lib/db.js';
 
 /**
  * Step 1 of login (unauthenticated, rate-limited): given a token, return its

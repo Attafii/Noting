@@ -1,19 +1,19 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import aiHandler from './_route-ai';
-import askHandler from './_route-ask';
-import challengeHandler from './_route-challenge';
-import documentsHandler from './_route-documents';
-import downloadHandler from './_route-download';
-import foldersHandler from './_route-folders';
-import healthHandler from './_route-health';
-import hintHandler from './_route-hint';
-import noteHandler from './_route-note';
-import notesHandler from './_route-notes';
-import revisionsHandler from './_route-revisions';
-import tokenQuestionHandler from './_route-token-question';
-import tokensHandler from './_route-tokens';
-import uploadHandler from './_route-upload';
-import usageHandler from './_route-usage';
+import aiHandler from './_route-ai.js';
+import askHandler from './_route-ask.js';
+import challengeHandler from './_route-challenge.js';
+import documentsHandler from './_route-documents.js';
+import downloadHandler from './_route-download.js';
+import foldersHandler from './_route-folders.js';
+import healthHandler from './_route-health.js';
+import hintHandler from './_route-hint.js';
+import noteHandler from './_route-note.js';
+import notesHandler from './_route-notes.js';
+import revisionsHandler from './_route-revisions.js';
+import tokenQuestionHandler from './_route-token-question.js';
+import tokensHandler from './_route-tokens.js';
+import uploadHandler from './_route-upload.js';
+import usageHandler from './_route-usage.js';
 
 type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void;
 
@@ -24,13 +24,13 @@ type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void
  * resolves the `_route-*` modules directly via dev-api.ts.
  *
  * Hardening: handlers are STATICALLY imported (bundled into this single
- * function at build time). The previous lazy `import('./_route-…')` without
- * a file extension works under Vite/vitest (`moduleResolution: bundler`)
- * but fails at runtime on Vercel Node ESM (`"type": "module"`), where a
- * relative dynamic import without `.js` throws ERR_MODULE_NOT_FOUND —
- * taking down EVERY route (including DB-free /challenge and /health) with
- * a generic `{"error":"Internal server error"}`. Static imports are
- * resolved by the bundler, so they cannot fail at request time.
+ * function at build time), and every relative import in the server graph
+ * uses an explicit `.js` extension (`./_route-ai.js`, not `./_route-ai`).
+ * Vercel transpiles (not bundles) each file, and under `"type": "module"`
+ * Node ESM throws ERR_MODULE_NOT_FOUND for extensionless relative imports
+ * at boot — taking down EVERY route with a bare 500. TypeScript maps
+ * `./x.js` → `./x.ts` at compile time, so local typecheck/tests are
+ * unaffected. The same rule applies to dynamic imports (see _route-upload.ts).
  *
  * Heavy/optional deps (busboy, RAG indexer) stay lazily imported INSIDE
  * their handlers (see _route-upload.ts), so a packaging failure there can

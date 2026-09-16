@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { enforceRateLimit } from './_ratelimit';
-import { withQueryTimeout } from './_timeout';
-import { getSql } from '../src/lib/db';
+import { enforceRateLimit } from './_ratelimit.js';
+import { withQueryTimeout } from './_timeout.js';
+import { getSql } from '../src/lib/db.js';
 
 /**
  * Unauthenticated liveness probe for uptime monitors. Reveals nothing

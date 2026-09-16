@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { getSql } from '../src/lib/db';
+import { requireUser } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { getSql } from '../src/lib/db.js';
 
 /**
  * Storage usage for the Settings page and future Free/Paid caps.

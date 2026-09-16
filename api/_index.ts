@@ -1,5 +1,5 @@
-import { aiConfigured, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai';
-import { getSql } from '../src/lib/db';
+import { aiConfigured, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai.js';
+import { getSql } from '../src/lib/db.js';
 
 const MAX_CHARS = 40_000;
 const CHUNK_CHARS = 900;

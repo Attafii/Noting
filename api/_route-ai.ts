@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from './_auth';
-import { enforceRateLimit } from './_ratelimit';
-import { bodyTooLargeMessage, checkBodySize, MAX_AI_BYTES } from './_limits';
-import { aiConfigured, chatComplete } from './_ai';
+import { requireUser } from './_auth.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { bodyTooLargeMessage, checkBodySize, MAX_AI_BYTES } from './_limits.js';
+import { aiConfigured, chatComplete } from './_ai.js';
 
 const SYSTEM_PROMPT =
   'Clean, format, and structure this scratchpad note efficiently using clean markdown while preserving structural integrity.';

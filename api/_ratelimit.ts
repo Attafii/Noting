@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash } from 'node:crypto';
-import { withQueryTimeout } from './_timeout';
-import { getSql } from '../src/lib/db';
+import { withQueryTimeout } from './_timeout.js';
+import { getSql } from '../src/lib/db.js';
 
 export const WINDOW_MS = 60_000;
 const DEFAULT_LIMIT = 120;

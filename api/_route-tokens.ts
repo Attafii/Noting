@@ -7,12 +7,12 @@ import {
   newTokenPlaintext,
   newUserId,
   normalizeAnswer,
-} from './_auth';
-import { verifyChallenge } from './_challenge';
-import { verifyTurnstile } from './_turnstile';
-import { enforceRateLimit } from './_ratelimit';
-import { isColdStartError, sleep, withQueryTimeout } from './_timeout';
-import { getSql } from '../src/lib/db';
+} from './_auth.js';
+import { verifyChallenge } from './_challenge.js';
+import { verifyTurnstile } from './_turnstile.js';
+import { enforceRateLimit } from './_ratelimit.js';
+import { isColdStartError, sleep, withQueryTimeout } from './_timeout.js';
+import { getSql } from '../src/lib/db.js';
 
 function cleanStr(v: unknown, max: number): string | null {
   if (typeof v !== 'string') return null;
