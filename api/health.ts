@@ -39,12 +39,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const started = Date.now();
+  // One-glance deployment diagnostics (no secrets): db_reachable tells
+  // whether Neon answers at all; tables_ok tells whether migrations ran.
+  // Bounded well under maxDuration so a sleeping DB yields JSON, not a hang.
   try {
     const sql = getSql();
-    await sql.query('SELECT 1');
-    res.status(200).json({ ok: true, latency_ms: Date.now() - started });
+    await withTimeout(sql.query('SELECT 1'), QUERY_TIMEOUT_MS);
+    let tables_ok = false;
+    try {
+      const rows = await withTimeout(
+        sql.query(
+          `SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+           AND tablename IN ('access_tokens', 'hint_grants', 'rate_limit_buckets')`,
+        ),
+        QUERY_TIMEOUT_MS,
+      );
+      const names = new Set(
+        rows.map((r) => (r as { tablename?: unknown }).tablename).filter((t) => typeof t === 'string'),
+      );
+      tables_ok =
+        names.has('access_tokens') && names.has('hint_grants') && names.has('rate_limit_buckets');
+    } catch (e) {
+      console.error('health tables check failed', e);
+    }
+    const ok = tables_ok;
+    res
+      .status(ok ? 200 : 503)
+      .json({ ok, db_reachable: true, tables_ok, latency_ms: Date.now() - started });
   } catch (e) {
     console.error('health check failed', e);
-    res.status(503).json({ ok: false });
+    res
+      .status(503)
+      .json({ ok: false, db_reachable: false, tables_ok: false, latency_ms: Date.now() - started });
   }
+}
+
+const QUERY_TIMEOUT_MS = 7000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('query timeout')), ms);
+    p.then(
+      (v) => {
+        if (timer) clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        if (timer) clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }

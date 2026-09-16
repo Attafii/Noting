@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  ApiError,
   fetchChallenge,
   fetchHint,
   fetchQuestion,
@@ -503,8 +504,19 @@ function GenerateForm({
         // spent Turnstile token can't be reused).
         if (!useTurnstile) await loadChallenge();
         else setTurnstileKey((k) => k + 1);
+        toast.error(err instanceof Error ? err.message : 'Could not create token');
+      } else if (err instanceof ApiError && err.status === 503) {
+        // Sleeping database, not a form/check problem: your inputs are kept,
+        // only the human-check is refreshed (its token may be spent).
+        setSelected(null);
+        setTurnstileToken(null);
+        if (useTurnstile) setTurnstileKey((k) => k + 1);
+        toast.error('Database is waking up — wait ~30 seconds, then retry', {
+          duration: 8000,
+        });
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Could not create token');
       }
-      toast.error(err instanceof Error ? err.message : 'Could not create token');
     } finally {
       setCreating(false);
     }
