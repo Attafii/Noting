@@ -324,6 +324,18 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       if (err instanceof ApiError && err.code === 'CONFLICT' && err.conflict) {
         // Pause here — the dialog resolves it, autosave resumes after.
         const serverRow = err.conflict;
+        // No real conflict when the texts already match (anchor-format skew
+        // or a raced autosave): re-anchor and carry on silently instead of
+        // trapping the user in the dialog. Only safe for plaintext — an
+        // encrypted server blob can't be compared without the key.
+        if (!(serverRow.enc ?? noteEnc) && serverRow.content === textRef.current) {
+          baseRef.current = serverRow.updated_at;
+          setSaveState('saved', serverRow.updated_at);
+          queryClient.setQueryData(['note', noteId], serverRow);
+          clearPending();
+          toast.info('Already in sync with the latest version');
+          return;
+        }
         setSaveState('idle');
         setConflict(serverRow);
         // Never show ciphertext in the comparison dialog: decrypt the server

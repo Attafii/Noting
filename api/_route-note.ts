@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireUser } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
 import { bodyTooLargeMessage, checkBodySize, MAX_NOTE_BYTES } from './_limits.js';
+import { isConflictingVersion } from './_note-conflict.js';
 import { getSql } from '../src/lib/db.js';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
 
@@ -47,6 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       // Optimistic-concurrency guard: when the client tells us which version
       // it based its edits on, refuse to silently clobber a newer one.
+      // Compared semantically (epoch ms + tolerance), never by raw string —
+      // driver formatting/precision skew must not read as "another device".
       // Cross-user ids → 404 (never 403).
       if (typeof base_updated_at === 'string' && base_updated_at.length > 0) {
         const current = await sql.query(
@@ -57,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.status(404).json({ error: 'Note not found' });
           return;
         }
-        if (String(current[0].updated_at) !== base_updated_at) {
+        if (isConflictingVersion(current[0].updated_at, base_updated_at)) {
           res.status(409).json({
             error: 'Note changed on another device',
             server: current[0],
