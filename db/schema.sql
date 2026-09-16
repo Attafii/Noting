@@ -1,5 +1,8 @@
 -- One-time setup: psql $NEON_CONNECTION_STRING -f db/schema.sql
-CREATE EXTENSION IF NOT EXISTS pgvector;
+-- NOTE: the upstream extension name is `vector` (not `pgvector`).
+-- `CREATE EXTENSION pgvector` throws on Neon even with IF NOT EXISTS.
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE notes (
     id SERIAL PRIMARY KEY,

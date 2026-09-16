@@ -1170,14 +1170,14 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
             )}
           </AnimatePresence>
 
-          <div className="flex items-center justify-between gap-2 border-t border-zinc-800/70 px-4 py-2.5">
-            <span className="font-mono text-[11px] text-zinc-600 sm:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-zinc-800 px-4 py-2.5">
+            <span className="font-mono text-[11px] text-zinc-500 sm:hidden">
               {words}w · {text.length}c
             </span>
-            <span className="hidden font-mono text-[11px] text-zinc-600 sm:inline">
+            <span className="hidden font-mono text-[11px] text-zinc-500 sm:inline">
               autosave · {Math.round(getAutosaveMs() / 100) / 10}s
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex min-h-[44px] flex-wrap items-center justify-end gap-1.5">
               <Button
                 variant="ghost"
                 size="sm"

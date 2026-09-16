@@ -222,7 +222,15 @@ function PreviewBody({
     );
   }
   if (fileType === 'application/pdf') {
-    return <iframe src={url} title={fileName} className="h-[68vh] w-full bg-zinc-100" />;
+    return (
+      <iframe
+        src={url}
+        title={fileName}
+        sandbox="allow-same-origin"
+        loading="lazy"
+        className="h-[68vh] w-full bg-zinc-100"
+      />
+    );
   }
   if (text !== null) {
     if (/\.md$/i.test(fileName) || fileType.includes('markdown')) {

@@ -59,7 +59,9 @@ export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
     <Card className="flex min-h-[320px] flex-1 flex-col overflow-hidden">
       <CardHeader>
         <CardTitle>ask documents</CardTitle>
-        <span className="font-mono text-[11px] text-zinc-600">semantic search</span>
+        <span className="font-mono text-[11px] text-zinc-600">
+          semantic search · keyword fallback
+        </span>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
         <form onSubmit={handleSubmit} className="flex gap-1.5">
@@ -109,11 +111,12 @@ export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
                 className="flex flex-col gap-2 rounded-xl border border-zinc-800/70 bg-zinc-900/50 p-3.5"
               >
                 <p className="text-[13px] font-medium text-zinc-100">{item.question}</p>
-                {item.result.fallback ? (
-                  <p className="text-xs text-amber-300">
-                    {item.result.warning ?? 'No answer available.'}
-                  </p>
-                ) : (
+                {item.result.mode === 'keyword' && item.result.answer && (
+                  <span className="inline-flex w-fit items-center rounded-full border border-amber-900/60 bg-amber-950/40 px-2 py-0.5 font-mono text-[10px] tracking-wide text-amber-300 uppercase">
+                    keyword mode · no vector index
+                  </span>
+                )}
+                {item.result.answer ? (
                   <>
                     <div className="markdown-body text-[13px]">
                       <Suspense
@@ -138,7 +141,16 @@ export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
                         ))}
                       </div>
                     )}
+                    {item.result.fallback && item.result.warning && (
+                      <p className="text-[11px] leading-relaxed text-amber-300/90">
+                        {item.result.warning}
+                      </p>
+                    )}
                   </>
+                ) : (
+                  <p className="text-xs text-amber-300">
+                    {item.result.warning ?? 'No answer available.'}
+                  </p>
                 )}
               </motion.article>
             ))}

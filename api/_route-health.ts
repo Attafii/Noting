@@ -29,17 +29,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         QUERY_TIMEOUT_MS,
       );
       const names = new Set(
-        rows.map((r) => (r as { tablename?: unknown }).tablename).filter((t) => typeof t === 'string'),
+        rows
+          .map((r) => (r as { tablename?: unknown }).tablename)
+          .filter((t) => typeof t === 'string'),
       );
       tables_ok =
         names.has('access_tokens') && names.has('hint_grants') && names.has('rate_limit_buckets');
     } catch (e) {
       console.error('health tables check failed', e);
     }
+    let search_ready = false;
+    try {
+      const ext = await withQueryTimeout(
+        sql.query(`SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pg_trgm')`),
+        QUERY_TIMEOUT_MS,
+      );
+      const names = new Set(
+        ext.map((r) => (r as { extname?: unknown }).extname).filter((t) => typeof t === 'string'),
+      );
+      if (names.has('vector')) {
+        const cols = await withQueryTimeout(
+          sql.query(`SELECT to_regclass('public.document_chunks') AS tbl`),
+          QUERY_TIMEOUT_MS,
+        );
+        search_ready = (cols[0] as { tbl?: unknown }).tbl !== null;
+      }
+    } catch (e) {
+      console.error('health search check failed', e);
+    }
     const ok = tables_ok;
     res
       .status(ok ? 200 : 503)
-      .json({ ok, db_reachable: true, tables_ok, latency_ms: Date.now() - started });
+      .json({ ok, db_reachable: true, tables_ok, search_ready, latency_ms: Date.now() - started });
   } catch (e) {
     console.error('health check failed', e);
     res

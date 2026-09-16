@@ -99,6 +99,16 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
     return () => clearTimeout(timer);
   }, [confirmId]);
 
+  // `/` focuses file search (README shortcut); citation chips open previews.
+  useEffect(() => {
+    const focus = () => {
+      setView('files');
+      requestAnimationFrame(() => searchRef.current?.focus());
+    };
+    window.addEventListener(SHORTCUT_EVENTS.focusSearch, focus);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, focus);
+  }, []);
+
   // External preview requests (e.g. citation chips in the Ask panel).
   useEffect(() => {
     const open = (event: Event) => {
@@ -371,7 +381,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                           </Button>
                         </span>
                       ) : (
-                        <span className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                        <span className="hover-reveal flex shrink-0 items-center gap-0.5 transition-opacity duration-200 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                           <Button
                             size="icon-sm"
                             variant="ghost"
@@ -393,7 +403,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                         </span>
                       )
                     ) : (
-                      <span className="flex shrink-0 items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                      <span className="hover-reveal flex shrink-0 items-center gap-0.5 transition-opacity duration-200 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                         <Button
                           size="icon-sm"
                           variant="ghost"

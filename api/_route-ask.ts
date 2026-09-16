@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // cross-user chunks are never searched, cited, or returned.
     // The model filter keeps retrieval inside a single embedding space, so a
     // future model swap can't silently mix incomparable vectors.
-    let rows;
+    let rows: Record<string, unknown>[];
     try {
       rows = await sql.query(
         `SELECT c.content, d.id AS document_id, d.file_name, c.embedding <=> $1::vector AS distance
@@ -76,15 +76,97 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL, userId],
       );
     } catch (e) {
-      // Most commonly: the pgvector extension/table is missing in this
-      // database (search was never set up). Degrade to a warning, not a 500.
-      console.error('ask retrieval unavailable', e);
+      // Most commonly: the vector extension/table is missing in this
+      // database (search was never set up — see db/migrate-010.sql).
+      // Fall through to keyword search instead of hard-failing.
+      console.error('ask vector retrieval unavailable, trying keyword fallback', e);
+      rows = [];
+      const terms = question
+        .trim()
+        .toLowerCase()
+        .split(/[^a-z0-9]+/i)
+        .filter((t) => t.length >= 3)
+        .slice(0, 8);
+      if (terms.length > 0) {
+        try {
+          const likeClauses = terms.map(
+            (_, i) => `(c.content ILIKE $${i + 1} OR d.file_name ILIKE $${i + 1})`,
+          );
+          const params = terms.map((t) => `%${t}%`);
+          const userParam = `$${terms.length + 1}`;
+          const limitParam = `$${terms.length + 2}`;
+          const kw = await sql.query(
+            `SELECT c.content, d.id AS document_id, d.file_name
+             FROM document_chunks c
+             JOIN documents d ON d.id = c.document_id
+             WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.user_id = ${userParam}
+               AND (${likeClauses.join(' OR ')})
+             ORDER BY length(c.content) ASC
+             LIMIT ${limitParam}`,
+            [...params, userId, TOP_K],
+          );
+          rows = kw;
+        } catch (kwErr) {
+          console.error('ask keyword fallback unavailable', kwErr);
+          res.status(200).json({
+            answer: '',
+            sources: [],
+            fallback: true,
+            mode: 'unavailable',
+            warning:
+              'Document search is not set up in this database yet — run db/migrate-010.sql (CREATE EXTENSION vector + pg_trgm), then re-upload files to index them.',
+          });
+          return;
+        }
+      }
+      if (rows.length === 0) {
+        res.status(200).json({
+          answer: '',
+          sources: [],
+          fallback: true,
+          mode: 'unavailable',
+          warning:
+            'Vector search is unavailable here (database extension missing) and no keyword matches were found — upload a text, markdown, CSV, or JSON file first. (Encrypted files are never indexed.)',
+        });
+        return;
+      }
+      const kwExcerpts = rows
+        .map(
+          (row, i) => `[${i + 1}] (from "${row.file_name as string}"):\n${row.content as string}`,
+        )
+        .join('\n\n');
+      const kwSources = rows.map((row) => ({
+        document_id: row.document_id as number,
+        file_name: row.file_name as string,
+      }));
+      const kwResult = await chatComplete(
+        [
+          { role: 'system', content: ANSWER_SYSTEM },
+          {
+            role: 'user',
+            content: `<documents>\n${kwExcerpts}\n</documents>\n\nQuestion: ${question.trim()}`,
+          },
+        ],
+        9000,
+        1024,
+      );
+      if ('failure' in kwResult) {
+        res.status(200).json({
+          answer: '',
+          sources: [],
+          fallback: true,
+          mode: 'keyword',
+          warning: 'The AI backend failed — try again in a moment.',
+        });
+        return;
+      }
       res.status(200).json({
-        answer: '',
-        sources: [],
+        answer: kwResult.text,
+        sources: kwSources,
         fallback: true,
+        mode: 'keyword',
         warning:
-          'Document search is not set up in this database (pgvector extension missing) — uploads still work, but Ask cannot search yet.',
+          'Vector search is not set up in this database — this answer used keyword matching instead. Run db/migrate-010.sql for full semantic search.',
       });
       return;
     }
@@ -101,7 +183,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const excerpts = rows
-      .map((row, i) => `[${i + 1}] (from "${row.file_name}"):\n${row.content}`)
+      .map((row, i) => `[${i + 1}] (from "${row.file_name as string}"):\n${row.content as string}`)
       .join('\n\n');
     const sources = rows.map((row) => ({
       document_id: row.document_id as number,
@@ -132,7 +214,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    res.status(200).json({ answer: result.text, sources });
+    res.status(200).json({ answer: result.text, sources, mode: 'vector' });
   } catch (e) {
     console.error('ask endpoint error', e);
     res.status(500).json({ error: 'Internal server error' });

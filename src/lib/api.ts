@@ -95,6 +95,8 @@ export interface AskResult {
   sources: AskSource[];
   fallback?: boolean;
   warning?: string;
+  /** Retrieval mode: vector (full), keyword (DB extension missing), unavailable. */
+  mode?: 'vector' | 'keyword' | 'unavailable';
 }
 
 export interface FormatResult {

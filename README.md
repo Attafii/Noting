@@ -42,6 +42,8 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
    - `psql $NEON_CONNECTION_STRING -f db/migrate-006.sql`
    - `psql $NEON_CONNECTION_STRING -f db/migrate-007.sql`
    - `psql $NEON_CONNECTION_STRING -f db/migrate-008.sql` (P0 organization: folders, favorites, note trash, tags, manual order, `pg_trgm` search indexes, SaaS-prep `user_id` columns)
+   - `psql $NEON_CONNECTION_STRING -f db/migrate-009.sql` (per-user tokens, Q&A, one-time hints)
+   - `psql $NEON_CONNECTION_STRING -f db/migrate-010.sql` (fix vector extension name — upstream is `vector` not `pgvector` — + trigram fallback index; re-upload files afterwards to re-index)
 4. Run: `npm run dev` → open `http://localhost:5173/?token=YOUR_TOKEN`
    - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.
    - The token is captured into `localStorage` and wiped from the URL on first load.

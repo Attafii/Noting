@@ -123,48 +123,62 @@ export function TopBar({
           </AnimatePresence>
 
           {typeof docs.data?.length === 'number' && (
-            <Badge variant="neutral" title={`${docs.data.length} documents stored`}>
+            <Badge
+              variant="neutral"
+              title={`${docs.data.length} documents stored`}
+              className="hidden sm:inline-flex"
+            >
               {docs.data.length} {docs.data.length === 1 ? 'file' : 'files'}
             </Badge>
           )}
 
-          {onSettings && (
-            <button
-              onClick={() => {
-                const next = getTheme();
-                applyTheme({ ...next, mode: next.mode === 'dark' ? 'light' : 'dark' });
-              }}
-              aria-label={theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              title={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
-            >
-              {theme.mode === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-            </button>
-          )}
+          {(onSettings || onLock) && (
+            <span className="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/80 p-1">
+              {onSettings && (
+                <button
+                  onClick={() => {
+                    const next = getTheme();
+                    applyTheme({ ...next, mode: next.mode === 'dark' ? 'light' : 'dark' });
+                  }}
+                  aria-label={
+                    theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
+                  }
+                  title={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  {theme.mode === 'dark' ? (
+                    <Sun className="size-3.5" />
+                  ) : (
+                    <Moon className="size-3.5" />
+                  )}
+                </button>
+              )}
 
-          {onSettings && (
-            <button
-              onClick={onSettings}
-              aria-label="Settings"
-              title="Settings"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
-            >
-              <Settings2 className="size-3.5" />
-            </button>
-          )}
+              {onSettings && (
+                <button
+                  onClick={onSettings}
+                  aria-label="Settings"
+                  title="Settings"
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <Settings2 className="size-3.5" />
+                </button>
+              )}
 
-          {onLock && (
-            <button
-              onClick={() => {
-                onLock();
-                toast.success('Workspace locked — token and answer cleared');
-              }}
-              aria-label="Lock workspace"
-              title="Lock workspace (clears the token and the in-memory answer)"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-zinc-700/70 bg-zinc-900 text-zinc-400 transition-colors hover:border-red-900/70 hover:text-red-300"
-            >
-              <Lock className="size-3.5" />
-            </button>
+              {onLock && (
+                <button
+                  onClick={() => {
+                    onLock();
+                    toast.success('Workspace locked — token and answer cleared');
+                  }}
+                  aria-label="Lock workspace"
+                  title="Lock workspace (clears the token and the in-memory answer)"
+                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-red-950/60 hover:text-red-300"
+                >
+                  <Lock className="size-3.5" />
+                </button>
+              )}
+            </span>
           )}
 
           <span

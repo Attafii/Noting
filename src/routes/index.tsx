@@ -202,7 +202,7 @@ function AuthedWorkspace({
       <OnboardingTour />
       <main
         className={cn(
-          'mx-auto grid max-w-7xl grid-cols-1 items-start gap-4 px-4 pt-5 pb-24 sm:px-6 lg:pb-5',
+          'mx-auto grid max-w-7xl grid-cols-1 items-start gap-5 px-4 pt-6 pb-24 sm:px-6 lg:gap-6 lg:pb-8',
           sideCollapsed
             ? 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'
             : 'lg:grid-cols-[var(--side-w)_minmax(0,1.15fr)_minmax(0,1fr)]',
