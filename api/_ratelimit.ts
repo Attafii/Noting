@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createHash } from 'node:crypto';
+import { withQueryTimeout } from './_timeout';
 import { getSql } from '../src/lib/db';
 
 export const WINDOW_MS = 60_000;
@@ -72,7 +73,10 @@ export const sqlStore: RateLimitStore = {
     const cutoff = now - WINDOW_MS;
     try {
       const sql = getSql();
-      const rows = await sql.query('SELECT hits FROM rate_limit_buckets WHERE key = $1', [key]);
+      const rows = await withQueryTimeout(
+        sql.query('SELECT hits FROM rate_limit_buckets WHERE key = $1', [key]),
+        6000,
+      );
       const raw = (rows[0]?.hits ?? []) as unknown[];
       const recent = raw
         .map((v) => (typeof v === 'string' ? parseInt(v, 10) : Number(v)))
@@ -86,11 +90,14 @@ export const sqlStore: RateLimitStore = {
       recent.push(now);
       // Prune to the newest `limit` entries so the array can't grow unbounded.
       const trimmed = recent.slice(-limit);
-      await sql.query(
-        `INSERT INTO rate_limit_buckets (key, hits, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET hits = EXCLUDED.hits, updated_at = NOW()`,
-        [key, trimmed],
+      await withQueryTimeout(
+        sql.query(
+          `INSERT INTO rate_limit_buckets (key, hits, updated_at)
+          VALUES ($1, $2, NOW())
+          ON CONFLICT (key) DO UPDATE SET hits = EXCLUDED.hits, updated_at = NOW()`,
+          [key, trimmed],
+        ),
+        6000,
       );
       return { allowed: true, retryAfterSec: 0 };
     } catch (e) {

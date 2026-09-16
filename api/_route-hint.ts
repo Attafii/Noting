@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { hashToken, isValidSessionId } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
+import { isColdStartError, withQueryTimeout } from './_timeout';
 import { getSql } from '../src/lib/db';
 
 /**
@@ -38,9 +39,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const rows = await sql.query('SELECT id, hint FROM access_tokens WHERE token_hash = $1', [
-      hashToken(token),
-    ]);
+    const rows = await withQueryTimeout(
+      sql.query('SELECT id, hint FROM access_tokens WHERE token_hash = $1', [
+        hashToken(token),
+      ]),
+      8000,
+    );
     if (rows.length === 0) {
       res.status(404).json({ error: 'Not found' });
       return;
@@ -48,13 +52,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const row = rows[0] as { id: string; hint: string };
 
     // Best-effort purge of stale grants (30-day window).
-    await sql
-      .query("DELETE FROM hint_grants WHERE revealed_at < NOW() - INTERVAL '30 days'")
-      .catch(() => undefined);
+    await withQueryTimeout(
+      sql.query("DELETE FROM hint_grants WHERE revealed_at < NOW() - INTERVAL '30 days'"),
+      8000,
+    ).catch(() => undefined);
 
-    const inserted = await sql.query(
-      'INSERT INTO hint_grants (token_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING token_id',
-      [row.id, session_id],
+    const inserted = await withQueryTimeout(
+      sql.query(
+        'INSERT INTO hint_grants (token_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING token_id',
+        [row.id, session_id],
+      ),
+      8000,
     );
     if (inserted.length === 0) {
       res.status(409).json({ error: 'Hint already shown this session' });
@@ -63,6 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(200).json({ hint: row.hint ?? '' });
   } catch (e) {
     console.error('hint error', e);
+    if (isColdStartError(e)) {
+      res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+      return;
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 }

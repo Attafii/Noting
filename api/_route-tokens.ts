@@ -11,6 +11,7 @@ import {
 import { verifyChallenge } from './_challenge';
 import { verifyTurnstile } from './_turnstile';
 import { enforceRateLimit } from './_ratelimit';
+import { isColdStartError, sleep, withQueryTimeout } from './_timeout';
 import { getSql } from '../src/lib/db';
 
 function cleanStr(v: unknown, max: number): string | null {
@@ -134,20 +135,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
   // Cold-start tolerance: a sleeping Neon project drops the first query.
-  // Retry once after a short pause for connection-class errors only (same
-  // ids — a validation error fails fast with no retry).
+  // Every query is bounded so a hang becomes a fast 503, never a platform
+  // timeout 500. Retry once for connection-class errors only (same ids —
+  // a validation error fails fast with no retry).
   const params = [userId, hashToken(tokenPlaintext), label, question, answerHash, salt, hint];
   let minted = false;
+  let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      await ensureTables(sql).catch(() => undefined);
-      await sql.query(
-        'INSERT INTO access_tokens (id, token_hash, label, question, answer_hash, answer_salt, hint) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        params,
+      await withQueryTimeout(ensureTables(sql).catch(() => undefined), 8000);
+      await withQueryTimeout(
+        sql.query(
+          'INSERT INTO access_tokens (id, token_hash, label, question, answer_hash, answer_salt, hint) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          params,
+        ),
+        8000,
       );
       minted = true;
       break;
     } catch (e) {
+      lastError = e;
       console.error(`tokens mint error (attempt ${attempt}/2)`, e);
       if (attempt === 1 && isColdStartError(e)) {
         await sleep(2000);
@@ -157,23 +164,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   if (!minted) {
+    // Unreachable DB (not bad input) → 503 so the client shows "waking up".
+    if (isColdStartError(lastError)) {
+      res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+      return;
+    }
     res.status(500).json({ error: 'Could not create token — try again' });
     return;
   }
 
   res.status(201).json({ token_plaintext: tokenPlaintext, user_id: userId, question });
-}
-
-/** Connection-class failures (sleeping DB, DNS, socket) are worth one retry. */
-function isColdStartError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e ?? '');
-  return /fetch failed|timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|sleep|wake|connection|terminat|socket|server closed/i.test(
-    msg,
-  );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Re-exported for tests: session-id shape shared with the hint endpoint. */

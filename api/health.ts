@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withQueryTimeout } from './_timeout';
 import { getSql } from '../src/lib/db';
 
 /**
@@ -44,10 +45,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Bounded well under maxDuration so a sleeping DB yields JSON, not a hang.
   try {
     const sql = getSql();
-    await withTimeout(sql.query('SELECT 1'), QUERY_TIMEOUT_MS);
+    await withQueryTimeout(sql.query('SELECT 1'), QUERY_TIMEOUT_MS);
     let tables_ok = false;
     try {
-      const rows = await withTimeout(
+      const rows = await withQueryTimeout(
         sql.query(
           `SELECT tablename FROM pg_tables WHERE schemaname = 'public'
            AND tablename IN ('access_tokens', 'hint_grants', 'rate_limit_buckets')`,
@@ -75,20 +76,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 const QUERY_TIMEOUT_MS = 7000;
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('query timeout')), ms);
-    p.then(
-      (v) => {
-        if (timer) clearTimeout(timer);
-        resolve(v);
-      },
-      (e) => {
-        if (timer) clearTimeout(timer);
-        reject(e);
-      },
-    );
-  });
-}

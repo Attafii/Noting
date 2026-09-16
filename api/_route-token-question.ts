@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { hashToken, isValidSessionId } from './_auth';
 import { enforceRateLimit } from './_ratelimit';
+import { isColdStartError, withQueryTimeout } from './_timeout';
 import { getSql } from '../src/lib/db';
 
 /**
@@ -36,26 +37,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const rows = await sql.query('SELECT id, question FROM access_tokens WHERE token_hash = $1', [
-      hashToken(token),
-    ]);
+    const rows = await withQueryTimeout(
+      sql.query('SELECT id, question FROM access_tokens WHERE token_hash = $1', [
+        hashToken(token),
+      ]),
+      8000,
+    );
     if (rows.length === 0) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
     let hint_available = true;
     if (isValidSessionId(session_id)) {
-      const grants = await sql
-        .query('SELECT 1 FROM hint_grants WHERE token_id = $1 AND session_id = $2', [
+      const grants = await withQueryTimeout(
+        sql.query('SELECT 1 FROM hint_grants WHERE token_id = $1 AND session_id = $2', [
           (rows[0] as { id: string }).id,
           session_id,
-        ])
-        .catch(() => []);
+        ]),
+        8000,
+      ).catch(() => []);
       hint_available = grants.length === 0;
     }
     res.status(200).json({ question: (rows[0] as { question: string }).question, hint_available });
   } catch (e) {
     console.error('token-question error', e);
+    if (isColdStartError(e)) {
+      res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+      return;
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 }
