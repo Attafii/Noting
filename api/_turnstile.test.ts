@@ -40,6 +40,19 @@ describe('verifyTurnstile (fallback branch)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts the current production hostname (noting.attafii.dev)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      siteverify({
+        success: true,
+        hostname: 'noting.attafii.dev',
+        challenge_ts: new Date().toISOString(),
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(verifyTurnstile('valid-client-token-new-domain')).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects upstream failure', async () => {
     vi.stubGlobal(
       'fetch',

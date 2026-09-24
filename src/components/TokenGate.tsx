@@ -805,9 +805,7 @@ function GenerateForm({
         <Button
           type="submit"
           variant="accent"
-          disabled={
-            creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)
-          }
+          disabled={creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)}
         >
           {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
           {creating ? 'Creating…' : 'Create my token'}
@@ -833,7 +831,7 @@ declare global {
           theme?: 'light' | 'dark' | 'auto';
           callback?: (token: string) => void;
           'expired-callback'?: () => void;
-          'error-callback'?: () => void;
+          'error-callback'?: (code?: string | number) => void;
         },
       ) => string;
       reset?: (widgetId?: string) => void;
@@ -889,6 +887,9 @@ function TurnstileWidget({
   const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
+  // Cloudflare passes an error code (e.g. hostname failures after a domain
+  // move). Kept verbatim so the message below can name the likely cause.
+  const [errorCode, setErrorCode] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sitekey) return;
@@ -919,8 +920,10 @@ function TurnstileWidget({
           'expired-callback': () => {
             if (!cancelled) onExpire();
           },
-          'error-callback': () => {
-            if (!cancelled) setFailed(true);
+          'error-callback': (code?: string | number) => {
+            if (cancelled) return;
+            setErrorCode(code === undefined || code === null ? null : String(code));
+            setFailed(true);
           },
         });
       })
@@ -955,10 +958,32 @@ function TurnstileWidget({
     );
   }
   if (failed) {
+    const code = (errorCode ?? '').toLowerCase();
+    const looksLikeHostname =
+      code.includes('hostname') || code.includes('110200') || code.includes('200100');
     return (
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-        Couldn’t load the alternative check — check your connection and try the tile puzzle.
-      </p>
+      <div className="mt-1.5 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+        {looksLikeHostname ? (
+          <>
+            This domain isn’t allowed for the Turnstile widget — add{' '}
+            <code className="font-mono">{window.location.hostname}</code> under Cloudflare dashboard
+            → Turnstile → widget → Settings → Allowed hostnames, and include it in{' '}
+            <code className="font-mono">TURNSTILE_ALLOWED_HOSTNAMES</code>, then redeploy. The tile
+            puzzle below still works.
+          </>
+        ) : (
+          <>
+            Couldn’t load the alternative check
+            {errorCode ? (
+              <>
+                {' '}
+                (code <code className="font-mono">{errorCode}</code>)
+              </>
+            ) : null}{' '}
+            — check your connection and try the tile puzzle.
+          </>
+        )}
+      </div>
     );
   }
   // NOTE: the container deliberately does NOT use the `cf-turnstile` CSS

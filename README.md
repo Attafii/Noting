@@ -32,7 +32,7 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
    - `GLOBAL_SECRET_TOKEN` — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
    - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
-   - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → Add widget → Managed mode → hostnames `noting-notes.vercel.app` (+ `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget.
+   - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → widget → Settings → Allowed hostnames `noting.attafii.dev` (+ `noting-notes.vercel.app` for the old URL, + `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget. After any domain move you must add the new hostname in that list AND set `TURNSTILE_ALLOWED_HOSTNAMES` (or rely on the updated defaults) — otherwise the widget shows a hostname error and `/api/tokens` rejects its tokens.
 3. Database (one time, plus each new migration in order):
    - `psql $NEON_CONNECTION_STRING -f db/schema.sql`
    - `psql $NEON_CONNECTION_STRING -f db/migrate-001.sql`

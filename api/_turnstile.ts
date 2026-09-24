@@ -15,7 +15,12 @@ const VERIFY_TIMEOUT_MS = 8000;
 /** siteverify success must be this fresh (Cloudflare tokens are short-lived). */
 const TOKEN_FRESHNESS_MS = 10 * 60 * 1000;
 
-const DEFAULT_HOSTNAMES = ['noting-notes.vercel.app', 'localhost', '127.0.0.1'];
+const DEFAULT_HOSTNAMES = [
+  'noting.attafii.dev',
+  'noting-notes.vercel.app',
+  'localhost',
+  '127.0.0.1',
+];
 
 function allowedHostnames(): string[] {
   const raw = process.env.TURNSTILE_ALLOWED_HOSTNAMES;
