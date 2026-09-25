@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
+import { useFocusTrap } from '../lib/focus-trap';
 import { Button } from './ui/button';
 
 const STORAGE_KEY = 'onboarded';
@@ -40,6 +41,16 @@ const STEPS = [
 export function OnboardingTour() {
   const [open, setOpen] = useState(shouldShowOnboarding);
   const [step, setStep] = useState(0);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
 
   function close() {
     dismiss();
@@ -59,6 +70,7 @@ export function OnboardingTour() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/70 p-4 backdrop-blur-sm sm:items-center"
         >
           <motion.div
+            ref={dialogRef}
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}

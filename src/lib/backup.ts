@@ -1,10 +1,18 @@
 import JSZip, { type JSZipObject } from 'jszip';
 import {
+  createFolder,
   createNote,
+  createRevision,
+  deleteDocument,
+  deleteNote,
   fetchDocumentBlob,
   getNote,
   listDocuments,
+  listFolders,
   listNotes,
+  listRevisions,
+  listTrash,
+  listTrashedNotes,
   saveNote,
   updateNote,
   uploadFile,
@@ -27,10 +35,38 @@ export interface BackupProgress {
 
 interface BackupManifest {
   app: 'noting';
-  version: 1;
+  version: 2;
   exported_at: string;
-  notes: { file: string; title: string; pinned: boolean; archived: boolean; enc: boolean }[];
-  documents: { file: string; name: string; type: string; enc: boolean }[];
+  folders: {
+    source_id: number;
+    name: string;
+    sort_order: number;
+  }[];
+  notes: {
+    source_id: number;
+    file: string;
+    title: string;
+    pinned: boolean;
+    archived: boolean;
+    favorite: boolean;
+    folder_id: number | null;
+    sort_order: number;
+    tags: string[];
+    created_at: string;
+    updated_at: string;
+    deleted: boolean;
+    enc: boolean;
+    revisions: { content: string; created_at: string; enc: boolean }[];
+  }[];
+  documents: {
+    source_id: number;
+    file: string;
+    name: string;
+    type: string;
+    enc: boolean;
+    deleted: boolean;
+    uploaded_at: string;
+  }[];
 }
 
 /** Exported for unit tests. */
@@ -57,6 +93,12 @@ async function notePlaintext(content: string): Promise<string> {
   return decryptText(key, content);
 }
 
+async function getCryptoKeyOrThrow(): Promise<CryptoKey> {
+  const key = await getCryptoKey();
+  if (!key) throw new Error('No encryption key');
+  return key;
+}
+
 /**
  * Full workspace backup as a .zip: plaintext note markdown files, original
  * document bytes (decrypted on the fly), and a manifest describing both.
@@ -65,11 +107,21 @@ async function notePlaintext(content: string): Promise<string> {
  */
 export async function exportBackup(onProgress?: (progress: BackupProgress) => void): Promise<Blob> {
   const zip = new JSZip();
-  const notes = await listNotes();
+  const folders = await listFolders();
+  const activeNotes = await listNotes();
+  const trashedNotes = await listTrashedNotes();
+  const trashedNoteIds = new Set(trashedNotes.map((note) => note.id));
+  const notes = [...activeNotes, ...trashedNotes];
+  const documents = [...(await listDocuments()), ...(await listTrash())];
   const manifest: BackupManifest = {
     app: 'noting',
-    version: 1,
+    version: 2,
     exported_at: new Date().toISOString(),
+    folders: folders.map((folder) => ({
+      source_id: folder.id,
+      name: folder.name,
+      sort_order: folder.sort_order,
+    })),
     notes: [],
     documents: [],
   };
@@ -81,28 +133,52 @@ export async function exportBackup(onProgress?: (progress: BackupProgress) => vo
     const text = await notePlaintext(full.content);
     const file = `notes/${summary.id}-${sanitizeFileName(summary.title)}.md`;
     zip.file(file, text);
+    const revisions = await listRevisions(summary.id);
     manifest.notes.push({
+      source_id: summary.id,
       file,
       title: summary.title,
       pinned: summary.pinned,
       archived: summary.archived,
+      favorite: summary.favorite,
+      folder_id: summary.folder_id,
+      sort_order: summary.sort_order ?? 0,
+      tags: summary.tags ?? [],
+      created_at: summary.created_at,
+      updated_at: summary.updated_at,
+      deleted: trashedNoteIds.has(summary.id),
       enc: summary.enc,
+      revisions: await Promise.all(
+        revisions.map(async (revision) => ({
+          content: revision.enc ? await notePlaintext(revision.content) : revision.content,
+          created_at: revision.created_at,
+          enc: revision.enc ?? false,
+        })),
+      ),
     });
   }
   onProgress?.({ phase: 'notes', done: notes.length, total: notes.length });
 
-  const docs = await listDocuments();
-  for (let i = 0; i < docs.length; i++) {
-    const doc = docs[i];
-    onProgress?.({ phase: 'files', done: i, total: docs.length });
-    const fetched = await fetchDocumentBlob(doc.id);
+  for (let i = 0; i < documents.length; i++) {
+    const doc = documents[i];
+    onProgress?.({ phase: 'files', done: i, total: documents.length });
+    const isDeleted = typeof doc.deleted_at === 'string';
+    const fetched = await fetchDocumentBlob(doc.id, isDeleted);
     const bytes = new Uint8Array(await fetched.blob.arrayBuffer());
     const clear = await maybeDecryptBytes(bytes, fetched.enc);
     const file = `files/${doc.id}-${sanitizeFileName(doc.file_name)}`;
     zip.file(file, toBufferView(clear));
-    manifest.documents.push({ file, name: doc.file_name, type: fetched.fileType, enc: doc.enc });
+    manifest.documents.push({
+      source_id: doc.id,
+      file,
+      name: doc.file_name,
+      type: fetched.fileType,
+      enc: doc.enc,
+      deleted: isDeleted,
+      uploaded_at: doc.uploaded_at,
+    });
   }
-  onProgress?.({ phase: 'files', done: docs.length, total: docs.length });
+  onProgress?.({ phase: 'files', done: documents.length, total: documents.length });
 
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
   return zip.generateAsync({ type: 'blob' });
@@ -126,14 +202,7 @@ function declaredSize(entry: JSZipObject): number | null {
   return typeof size === 'number' && size >= 0 ? size : null;
 }
 
-/**
- * Pre-scan every file we intend to extract. Oversized entries are rejected
- * before a single byte is decompressed; unknown sizes pass (JSZip only
- * reports them for exotic archives) and still hit the 4.5MB upload ceiling
- * downstream for files.
- *
- * Exported for unit tests.
- */
+/** Pre-scan every file we intend to extract before decompression. */
 export function planExtraction(
   zip: JSZip,
   files: string[],
@@ -160,11 +229,7 @@ export function planExtraction(
   return { allowed, rejected, total };
 }
 
-/**
- * Restore a backup zip. Notes are recreated with their titles/pins; files are
- * re-uploaded (and re-encrypted when E2E is currently on). Idempotent-safe to
- * run twice — it just creates duplicates, so the summary toast says as much.
- */
+/** Restore a backup zip, preserving organization, trash state, and document links. */
 export async function importBackup(
   file: File,
   onProgress?: (progress: BackupProgress) => void,
@@ -172,59 +237,89 @@ export async function importBackup(
   const zip = await JSZip.loadAsync(file);
   const manifestFile = zip.file('manifest.json');
   if (!manifestFile) throw new Error('Not a Noting backup (manifest.json missing)');
-  const manifest = JSON.parse(await manifestFile.async('string')) as BackupManifest;
-  if (manifest.app !== 'noting' || !Array.isArray(manifest.notes)) {
+  const parsed = JSON.parse(await manifestFile.async('string')) as Partial<BackupManifest> & {
+    version?: number;
+  };
+  if (parsed.app !== 'noting' || !Array.isArray(parsed.notes)) {
     throw new Error('Unrecognized backup format');
   }
+  if (parsed.version !== 2) {
+    const legacy = parsed as unknown as {
+      notes?: Array<{
+        file: string;
+        title: string;
+        pinned: boolean;
+        archived: boolean;
+        enc: boolean;
+      }>;
+      documents?: Array<{ file: string; name: string; type: string; enc: boolean }>;
+    };
+    parsed.notes = (legacy.notes ?? []).map((entry, index) => ({
+      source_id: index + 1,
+      file: entry.file,
+      title: entry.title,
+      pinned: entry.pinned,
+      archived: entry.archived,
+      favorite: false,
+      folder_id: null,
+      sort_order: index,
+      tags: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      deleted: false,
+      enc: entry.enc,
+      revisions: [],
+    }));
+    parsed.documents = (legacy.documents ?? []).map((entry, index) => ({
+      source_id: index + 1,
+      file: entry.file,
+      name: entry.name,
+      type: entry.type,
+      enc: entry.enc,
+      deleted: false,
+      uploaded_at: new Date().toISOString(),
+    }));
+    parsed.folders = [];
+    parsed.version = 2;
+  }
 
+  const manifest = parsed as BackupManifest;
   const e2e = isE2EEnabled();
+  if (manifest.notes.length + manifest.documents.length > MAX_ENTRIES) {
+    throw new Error('Backup contains too many entries');
+  }
   let notes = 0;
   let files = 0;
-  // Reject decompression bombs before extracting anything.
+  let failed = 0;
+  let extractedBytes = 0;
   const plan = planExtraction(zip, [
     ...manifest.notes.map((entry) => entry.file),
-    ...(manifest.documents ?? []).map((entry) => entry.file),
+    ...manifest.documents.map((entry) => entry.file),
   ]);
-  let failed = plan.rejected;
+  failed += plan.rejected;
 
-  for (let i = 0; i < manifest.notes.length; i++) {
-    const entry = manifest.notes[i];
-    onProgress?.({ phase: 'notes', done: i, total: manifest.notes.length });
-    if (!plan.allowed.has(entry.file)) {
-      failed++;
-      continue;
-    }
+  const folderMap = new Map<number, number>();
+  for (const folder of manifest.folders ?? []) {
     try {
-      const text = await zip.file(entry.file)?.async('string');
-      if (typeof text !== 'string') throw new Error('missing entry');
-      const created = await createNote(entry.title);
-      const key = entry.enc || e2e ? await getCryptoKey() : null;
-      const content = key ? await encryptText(key, text) : text;
-      await saveNote({
-        id: created.id,
-        content,
-        baseUpdatedAt: created.updated_at,
-        enc: !!key,
-      });
-      if (entry.pinned || entry.archived) {
-        await updateNote(created.id, { pinned: entry.pinned, archived: entry.archived });
-      }
-      notes++;
+      const created = await createFolder(folder.name);
+      folderMap.set(folder.source_id, created.id);
     } catch {
       failed++;
     }
   }
 
-  for (let i = 0; i < (manifest.documents ?? []).length; i++) {
+  const documentMap = new Map<number, number>();
+  for (let i = 0; i < manifest.documents.length; i++) {
     const entry = manifest.documents[i];
     onProgress?.({ phase: 'files', done: i, total: manifest.documents.length });
-    if (!plan.allowed.has(entry.file)) {
-      failed++;
-      continue;
-    }
+    if (!plan.allowed.has(entry.file)) continue;
     try {
       const data = await zip.file(entry.file)?.async('uint8array');
       if (!data) throw new Error('missing entry');
+      extractedBytes += data.byteLength;
+      if (data.byteLength > MAX_ENTRY_BYTES || extractedBytes > MAX_TOTAL_BYTES) {
+        throw new Error('archive is too large');
+      }
       let payload = new File([toBufferView(data)], entry.name, { type: entry.type });
       let encrypted = false;
       if (e2e) {
@@ -235,12 +330,71 @@ export async function importBackup(
         });
         encrypted = true;
       }
-      await uploadFile(payload, undefined, encrypted);
+      const uploaded = await uploadFile(payload, undefined, encrypted);
+      documentMap.set(entry.source_id, uploaded.id);
+      if (entry.deleted) await deleteDocument(uploaded.id);
       files++;
     } catch {
       failed++;
     }
   }
+  onProgress?.({
+    phase: 'files',
+    done: manifest.documents.length,
+    total: manifest.documents.length,
+  });
+
+  for (let i = 0; i < manifest.notes.length; i++) {
+    const entry = manifest.notes[i];
+    onProgress?.({ phase: 'notes', done: i, total: manifest.notes.length });
+    if (!plan.allowed.has(entry.file)) continue;
+    try {
+      const text = await zip.file(entry.file)?.async('string');
+      if (typeof text !== 'string') throw new Error('missing entry');
+      extractedBytes += new TextEncoder().encode(text).byteLength;
+      if (extractedBytes > MAX_TOTAL_BYTES) throw new Error('archive is too large');
+      const rewritten = text.replace(/\/api\/download\?id=(\d+)/g, (match, sourceId: string) => {
+        const mapped = documentMap.get(Number(sourceId));
+        return mapped ? `/api/download?id=${mapped}` : match;
+      });
+      const created = await createNote(entry.title);
+      let content = rewritten;
+      let enc = false;
+      if (e2e) {
+        const key = await getCryptoKey();
+        if (!key) throw new Error('No encryption key');
+        content = await encryptText(key, rewritten);
+        enc = true;
+      }
+      await saveNote({
+        id: created.id,
+        content,
+        baseVersion: created.content_version ?? 1,
+        mutationId: crypto.randomUUID(),
+        enc,
+      });
+      const folderId = entry.folder_id === null ? null : (folderMap.get(entry.folder_id) ?? null);
+      await updateNote(created.id, {
+        pinned: entry.pinned,
+        archived: entry.archived,
+        favorite: entry.favorite,
+        folder_id: folderId,
+        sort_order: entry.sort_order,
+        tags: entry.tags,
+      });
+      for (const revision of entry.revisions ?? []) {
+        const revisionContent = e2e
+          ? await encryptText(await getCryptoKeyOrThrow(), revision.content)
+          : revision.content;
+        await createRevision({ noteId: created.id, content: revisionContent, enc: e2e });
+      }
+      if (entry.deleted) await deleteNote(created.id);
+      notes++;
+    } catch {
+      failed++;
+    }
+  }
+  onProgress?.({ phase: 'notes', done: manifest.notes.length, total: manifest.notes.length });
 
   return { notes, files, failed };
 }

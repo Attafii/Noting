@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { createNote, listDocuments, listNotes, triggerBlobDownload } from '../lib/api';
+import { createNote, listDocuments, listNotesSorted, triggerBlobDownload } from '../lib/api';
 import { useFocusTrap } from '../lib/focus-trap';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
@@ -64,13 +64,18 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, enabled: open });
+  const notesQuery = useQuery({
+    queryKey: ['palette-notes', query],
+    queryFn: () => listNotesSorted('updated', query),
+    enabled: open,
+  });
   const docsQuery = useQuery({ queryKey: ['documents'], queryFn: listDocuments, enabled: open });
 
   const create = useMutation({
     mutationFn: () => createNote('Untitled'),
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      void queryClient.invalidateQueries({ queryKey: ['palette-notes'] });
       close();
       onSelectNote(note.id);
     },
@@ -116,6 +121,7 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
           { name: 'title', weight: 2 },
           { name: 'tags', weight: 1.5 },
           { name: 'preview', weight: 1 },
+          { name: 'search_text', weight: 0.7 },
         ],
         threshold: 0.4,
         ignoreLocation: true,
@@ -353,10 +359,22 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
                 }}
                 placeholder="Type a command or search…"
                 aria-label="Command palette"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="command-palette-list"
+                aria-activedescendant={
+                  items[cursor] ? `command-option-${items[cursor].key}` : undefined
+                }
                 className="border-0 bg-transparent text-sm focus:border-0"
               />
             </div>
-            <div ref={listRef} className="max-h-80 overflow-y-auto p-1.5">
+            <div
+              ref={listRef}
+              id="command-palette-list"
+              role="listbox"
+              aria-label="Commands and search results"
+              className="max-h-80 overflow-y-auto p-1.5"
+            >
               {items.length === 0 && (
                 <p className="px-3 py-6 text-center text-xs text-zinc-500">
                   {notesQuery.isPending || docsQuery.isPending ? 'Loading…' : 'No matches'}
@@ -374,6 +392,9 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
                       </p>
                     )}
                     <button
+                      id={`command-option-${item.key}`}
+                      role="option"
+                      aria-selected={index === cursor}
                       data-index={index}
                       onClick={() => item.run()}
                       onMouseMove={() => setCursor(index)}

@@ -15,6 +15,7 @@ import {
   Loader2,
   Lock,
   PackageOpen,
+  RefreshCw,
   Search,
   Trash2,
   TriangleAlert,
@@ -28,6 +29,7 @@ import {
   fetchDocumentBlob,
   listDocuments,
   listTrash,
+  reindexDocument,
   restoreDocument,
   triggerBlobDownload,
   type DocumentMeta,
@@ -174,6 +176,15 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
       toast.success('Restored');
     },
     onError: (err) => handleMutationError(err, onUnauthorized, 'Restore failed'),
+  });
+
+  const reindex = useMutation({
+    mutationFn: reindexDocument,
+    onSuccess: () => {
+      refresh();
+      toast.success('Indexing queued');
+    },
+    onError: (err) => handleMutationError(err, onUnauthorized, 'Reindex failed'),
   });
 
   async function handleDownload(doc: DocumentMeta) {
@@ -325,6 +336,12 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                   (trash.isPending && trash.variables === doc.id) ||
                   (destroy.isPending && destroy.variables === doc.id) ||
                   (restore.isPending && restore.variables === doc.id);
+                const indexLabel =
+                  doc.index_status === 'queued' || doc.index_status === 'processing'
+                    ? ' · indexing…'
+                    : doc.index_status === 'failed'
+                      ? ' · search unavailable'
+                      : '';
                 return (
                   <motion.li
                     key={doc.id}
@@ -356,6 +373,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                         {view === 'trash' && doc.deleted_at
                           ? `deleted ${timeAgo(doc.deleted_at)}`
                           : timeAgo(doc.uploaded_at)}
+                        {indexLabel}
                       </p>
                     </div>
                     {view === 'trash' ? (
@@ -404,6 +422,17 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                       )
                     ) : (
                       <span className="hover-reveal flex shrink-0 items-center gap-0.5 transition-opacity duration-200 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
+                        {doc.index_status === 'failed' && (
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => reindex.mutate(doc.id)}
+                            disabled={reindex.isPending}
+                            title={`Retry indexing ${doc.file_name}`}
+                          >
+                            <RefreshCw />
+                          </Button>
+                        )}
                         <Button
                           size="icon-sm"
                           variant="ghost"

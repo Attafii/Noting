@@ -1,34 +1,29 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router';
 import { MotionConfig } from 'motion/react';
 import { Toaster } from 'sonner';
+import { useTheme } from '../lib/theme';
+import { PwaUpdatePrompt } from '../components/PwaUpdatePrompt';
 
 export const Route = createRootRoute({
   component: RootComponent,
-  beforeLoad: () => {
-    const url = new URL(window.location.href);
-    const token = url.searchParams.get('token');
-    if (token) {
-      localStorage.setItem('bridge-token', token);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  },
 });
 
 function RootComponent() {
+  const theme = useTheme();
   return (
-    // Honor the OS reduced-motion preference across all animations.
     <MotionConfig reducedMotion="user">
       <div className="min-h-screen bg-zinc-950 font-sans text-zinc-100 antialiased">
         <Outlet />
+        <PwaUpdatePrompt />
         <Toaster
-          theme="dark"
+          theme={theme.mode}
           position="bottom-right"
           gap={8}
           toastOptions={{
             style: {
-              background: '#18181b',
-              border: '1px solid #3f3f46',
-              color: '#f4f4f5',
+              background: theme.mode === 'dark' ? '#18181b' : '#ffffff',
+              border: theme.mode === 'dark' ? '#3f3f46' : '#e7e5e4',
+              color: theme.mode === 'dark' ? '#f4f4f5' : '#1c1917',
             },
           }}
         />

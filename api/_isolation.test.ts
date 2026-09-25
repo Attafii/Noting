@@ -145,10 +145,7 @@ describe('per-user isolation: every query is scoped to the caller', () => {
   it("A cannot read B's revisions → 404 (owner join)", async () => {
     dataQuery.mockResolvedValueOnce([]); // owner check → 0 rows
     const r = res();
-    await revisionsHandler(
-      req('GET', { query: { note_id: '9' } }),
-      r as unknown as VercelResponse,
-    );
+    await revisionsHandler(req('GET', { query: { note_id: '9' } }), r as unknown as VercelResponse);
     expect(r.statusCode).toBe(404);
     const [text, params] = dataQuery.mock.calls[0];
     expect(String(text)).toContain('user_id');

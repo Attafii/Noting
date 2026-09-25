@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
@@ -9,6 +9,7 @@ import { encryptBytes, toBufferView } from '../lib/crypto';
 import { getCryptoKey, useE2E } from '../lib/e2e';
 import { formatBytes } from '../lib/format';
 import { cn } from '../lib/utils';
+import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 const MAX_BYTES = 4.5 * 1024 * 1024;
@@ -20,6 +21,7 @@ interface QueueItem {
   progress: number;
   status: 'uploading' | 'done' | 'error';
   error?: string;
+  file: File;
 }
 
 interface FileDropzoneProps {
@@ -31,6 +33,12 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const idRef = useRef(0);
   const e2e = useE2E();
+  const maxPlaintextBytes = e2e ? MAX_BYTES - 1024 : MAX_BYTES;
+  const controllers = useRef(new Map<number, AbortController>());
+  useEffect(() => {
+    const activeControllers = controllers.current;
+    return () => activeControllers.forEach((controller) => controller.abort());
+  }, []);
 
   const patchItem = useCallback((id: number, patch: Partial<QueueItem>) => {
     setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -42,7 +50,10 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
 
   const startUpload = useCallback(
     (id: number, file: File) => {
+      patchItem(id, { status: 'uploading', progress: 0, error: undefined });
       void (async () => {
+        const controller = new AbortController();
+        controllers.current.set(id, controller);
         // E2E: encrypt bytes in-browser; the server stores opaque ciphertext
         // under the original name and MIME type.
         let payload = file;
@@ -51,6 +62,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
           const key = await getCryptoKey();
           if (!key) {
             patchItem(id, { status: 'error', error: 'No encryption key — re-enter token' });
+            controllers.current.delete(id);
             return;
           }
           try {
@@ -62,23 +74,33 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
             encrypted = true;
           } catch {
             patchItem(id, { status: 'error', error: 'Encryption failed' });
+            controllers.current.delete(id);
             return;
           }
         }
         try {
-          await uploadFile(payload, (progress) => patchItem(id, { progress }), encrypted);
+          await uploadFile(
+            payload,
+            (progress) => patchItem(id, { progress }),
+            encrypted,
+            undefined,
+            controller.signal,
+          );
         } catch (err: unknown) {
           if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
             removeItem(id);
             onUnauthorized();
+            controllers.current.delete(id);
             return;
           }
           const message = err instanceof Error ? err.message : 'Upload failed';
           patchItem(id, { status: 'error', error: message });
           toast.error(message);
+          controllers.current.delete(id);
           return;
         }
         patchItem(id, { status: 'done', progress: 100 });
+        controllers.current.delete(id);
         void queryClient.invalidateQueries({ queryKey: ['documents'] });
         setTimeout(() => removeItem(id), 1800);
       })();
@@ -91,7 +113,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
       for (const file of files) {
         idRef.current += 1;
         const id = idRef.current;
-        if (file.size > MAX_BYTES) {
+        if (file.size > maxPlaintextBytes) {
           setQueue((prev) => [
             ...prev,
             {
@@ -100,19 +122,20 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
               size: file.size,
               progress: 0,
               status: 'error',
-              error: `Too large — max ${formatBytes(MAX_BYTES)}`,
+              error: `Too large — max ${formatBytes(maxPlaintextBytes)}`,
+              file,
             },
           ]);
           continue;
         }
         setQueue((prev) => [
           ...prev,
-          { id, name: file.name, size: file.size, progress: 0, status: 'uploading' },
+          { id, name: file.name, size: file.size, progress: 0, status: 'uploading', file },
         ]);
         startUpload(id, file);
       }
     },
-    [startUpload],
+    [maxPlaintextBytes, startUpload],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -126,7 +149,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
         <CardTitle>upload</CardTitle>
         <span className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-600">
           {e2e && <Lock className="size-3 text-accent-300" />}
-          max {formatBytes(MAX_BYTES)} each{e2e ? ' · encrypted' : ''}
+          max {formatBytes(maxPlaintextBytes)} each{e2e ? ' · encrypted' : ''}
         </span>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -173,6 +196,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
               transition={{ duration: 0.2 }}
+              aria-live="polite"
               className="flex flex-col gap-1.5 overflow-hidden"
             >
               <AnimatePresence initial={false}>
@@ -213,6 +237,25 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
                           )}
                         </p>
                       </div>
+                      {item.status === 'uploading' && (
+                        <button
+                          onClick={() => controllers.current.get(item.id)?.abort()}
+                          aria-label={`Cancel upload of ${item.name}`}
+                          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      )}
+                      {item.status === 'error' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => startUpload(item.id, item.file)}
+                          title={`Retry ${item.name}`}
+                        >
+                          Retry
+                        </Button>
+                      )}
                       {item.status !== 'uploading' && (
                         <button
                           onClick={() => removeItem(item.id)}

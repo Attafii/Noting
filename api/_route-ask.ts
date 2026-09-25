@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireUser } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
 import { aiConfigured, chatComplete, embedTexts, vectorLiteral, EMBED_MODEL } from './_ai.js';
+import { consumeAiBudget, QuotaError } from './_quota.js';
 import { getSql } from '../src/lib/db.js';
 
 const TOP_K = 6;
@@ -46,6 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    await consumeAiBudget(userId);
     const sql = getSql();
 
     const vectors = await embedTexts([question.trim()]);
@@ -70,7 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `SELECT c.content, d.id AS document_id, d.file_name, c.embedding <=> $1::vector AS distance
          FROM document_chunks c
          JOIN documents d ON d.id = c.document_id
-         WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.user_id = $4 AND c.embedding IS NOT NULL AND c.model = $3
+         WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.index_status = 'ready' AND d.user_id = $4 AND c.embedding IS NOT NULL AND c.model = $3
          ORDER BY c.embedding <=> $1::vector
          LIMIT $2`,
         [vectorLiteral(vectors[0]), TOP_K, EMBED_MODEL, userId],
@@ -99,7 +101,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             `SELECT c.content, d.id AS document_id, d.file_name
              FROM document_chunks c
              JOIN documents d ON d.id = c.document_id
-             WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.user_id = ${userParam}
+              WHERE d.deleted_at IS NULL AND d.enc = FALSE AND d.index_status = 'ready' AND d.user_id = ${userParam}
                AND (${likeClauses.join(' OR ')})
              ORDER BY length(c.content) ASC
              LIMIT ${limitParam}`,
@@ -216,6 +218,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.status(200).json({ answer: result.text, sources, mode: 'vector' });
   } catch (e) {
+    if (e instanceof QuotaError) {
+      res.status(e.status).json({ error: e.message });
+      return;
+    }
     console.error('ask endpoint error', e);
     res.status(500).json({ error: 'Internal server error' });
   }

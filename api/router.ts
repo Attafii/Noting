@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import aiHandler from './_route-ai.js';
 import askHandler from './_route-ask.js';
@@ -10,6 +11,7 @@ import hintHandler from './_route-hint.js';
 import noteHandler from './_route-note.js';
 import notesHandler from './_route-notes.js';
 import revisionsHandler from './_route-revisions.js';
+import sessionHandler from './_route-session.js';
 import tokenQuestionHandler from './_route-token-question.js';
 import tokensHandler from './_route-tokens.js';
 import uploadHandler from './_route-upload.js';
@@ -48,6 +50,7 @@ const HANDLERS: Record<string, Handler> = {
   note: noteHandler,
   notes: notesHandler,
   revisions: revisionsHandler,
+  session: sessionHandler,
   'token-question': tokenQuestionHandler,
   tokens: tokensHandler,
   upload: uploadHandler,
@@ -86,12 +89,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  const requestId = randomUUID();
+  res.setHeader('X-Request-Id', requestId);
   try {
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
+      try {
+        if (new URL(String(req.headers.origin)).host !== String(req.headers.host ?? '')) {
+          res.status(403).json({ error: 'Cross-origin request rejected' });
+          return;
+        }
+      } catch {
+        res.status(403).json({ error: 'Cross-origin request rejected' });
+        return;
+      }
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Vary', 'Cookie, Authorization');
     await fn(req, res);
   } catch (e) {
     // A crashing route must never surface as an empty 500: log the route so
     // Vercel function logs identify the culprit immediately.
-    console.error(`api router: handler "${route}" threw`, e);
+    console.error(`api router: request ${requestId} route ${route} threw`, e);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });
     }

@@ -1,6 +1,6 @@
 # Noting
 
-A secure, single-page cross-device bridge: one autosaving scratchpad note plus drag-and-drop document sync, gated by a single shared token. Dark, stealth-luxe UI.
+A secure, single-page personal workspace for notes, files, and document Q&A. It autosaves across devices, keeps organization in one place, and uses a dark, stealth-luxe UI.
 
 ## Stack
 
@@ -14,7 +14,9 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
 - Rich editor: markdown toolbar, slash commands (`/h1 /todo /code /table`), Write/Preview/Split views, outline panel, find-and-replace, `[[wikilinks]]`, word goals, reading time, focus mode, per-note export (.md/.html/print/PDF/duplicate), templates, image paste-to-Files
 - Global fuzzy search in the command palette (`Ctrl/Cmd+K`) across notes, tags, and files
 - Light mode + accent picker (gold/emerald/cobalt) + density, resizable/collapsible layout, mobile bottom bar, Home dashboard, onboarding tour, `/welcome` landing page, full `/settings` page (appearance, editor prefs, shortcut customizer, storage usage)
-- Cross-device conflict detection — "Keep mine / Load theirs" dialog instead of silent overwrites
+- Cross-device conflict detection — versioned writes, mutation IDs, and a "Keep mine / Load theirs / Keep both" dialog instead of silent overwrites
+- Encrypted per-user offline outbox in IndexedDB with reconnect replay and pending-sync protection
+- Short-lived HttpOnly workspace sessions, one-time recovery codes, token revocation, and optional invite-only self-service
 - Version history (last 50 revisions per note) with one-click restore + undo
 - Multi-file parallel uploads with progress, file search, sizes, previews, download, trash (30-day restore window)
 - "Ask your documents": semantic search (pgvector + OpenRouter embeddings) with cited AI answers
@@ -23,30 +25,30 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
 - Command palette (`Ctrl/Cmd+K`), keyboard shortcuts, full backup/restore as `.zip`
 - Per-endpoint rate limiting, security headers, health endpoint
 - Keyboard shortcuts: `Ctrl/Cmd+S` save now, `Ctrl/Cmd+P` preview toggle, `Ctrl/Cmd+H` history, `Ctrl/Cmd+K` palette, `/` focuses file search
-- PWA: installable app shell works offline; note edits queue in the browser and sync on reconnect
+- PWA: installable app shell works offline; encrypted note edits queue per workspace and sync on reconnect
 
 ## Setup
 
 1. Install: `npm install`
 2. Copy `.env.example` to `.env.local` and fill in:
-   - `GLOBAL_SECRET_TOKEN` — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+   - `GLOBAL_SECRET_TOKEN` — blind admin/configuration secret; generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+   - `CHALLENGE_SIGNING_SECRET` — separate HMAC secret for the built-in human-check
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
    - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
+   - `PUBLIC_SELF_SERVICE_TOKENS=true` — explicitly enable public token creation; production defaults to invite-only/disabled
+   - Optional limits: `MAX_STORAGE_BYTES`, `MAX_FILE_COUNT`, `MAX_NOTES`, and `MAX_AI_CALLS_PER_DAY`
    - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → widget → Settings → Allowed hostnames `noting.attafii.dev` (+ `noting-notes.vercel.app` for the old URL, + `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget. After any domain move you must add the new hostname in that list AND set `TURNSTILE_ALLOWED_HOSTNAMES` (or rely on the updated defaults) — otherwise the widget shows a hostname error and `/api/tokens` rejects its tokens.
-3. Database (one time, plus each new migration in order):
-   - `psql $NEON_CONNECTION_STRING -f db/schema.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-001.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-002.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-003.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-004.sql` (provider swap: drops stale NVIDIA-era chunks; re-upload files to re-index)
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-006.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-007.sql`
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-008.sql` (P0 organization: folders, favorites, note trash, tags, manual order, `pg_trgm` search indexes, SaaS-prep `user_id` columns)
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-009.sql` (per-user tokens, Q&A, one-time hints)
-   - `psql $NEON_CONNECTION_STRING -f db/migrate-010.sql` (fix vector extension name — upstream is `vector` not `pgvector` — + trigram fallback index; re-upload files afterwards to re-index)
-4. Run: `npm run dev` → open `http://localhost:5173/?token=YOUR_TOKEN`
+3. Database migrations (the runner records checksums and skips completed files):
+   - Fresh database: `npm run migrate -- --all`
+   - Existing database: run `npm run migrate -- db/migrate-011-integrity.sql`
+   - Verify the applied set with `npm run migrate -- status`
+4. For legacy rows with `user_id IS NULL`, preview and apply ownership explicitly:
+   - `OWNER_TOKEN=ntk_… npm run backfill:owner`
+   - `OWNER_TOKEN=ntk_… npm run backfill:owner -- --apply`
+5. For an invite-only deployment, create one-time codes with `npm run create:invite -- <code> [valid-days]`; set `PUBLIC_SELF_SERVICE_TOKENS=false` in production.
+6. Run: `npm run dev` → open `http://localhost:5173/`
    - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.
-   - The token is captured into `localStorage` and wiped from the URL on first load.
+   - Tokens are kept in tab memory; authenticated API calls use a short-lived HttpOnly session cookie.
    - Notes and files are read directly from Neon on every load — no demo data is injected at runtime.
 
 ## Scripts
@@ -59,55 +61,54 @@ A secure, single-page cross-device bridge: one autosaving scratchpad note plus d
 | `npm run lint`                            | ESLint (0 errors required)              |
 | `npm test`                                | Vitest unit suites                      |
 | `npm run format` / `npm run format:check` | Prettier write / check                  |
+| `npm run migrate -- --all`                | Apply checksummed migrations            |
+| `npm run backfill:owner`                  | Preview/apply legacy ownership          |
+| `npm run create:invite -- <code>`         | Create a one-time invite code           |
+| `npm run purge:retention`                 | Run scheduled trash/session cleanup     |
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, and build on every push/PR.
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, unit/API tests, production dependency audit, and build on every push/PR.
 
 ## API
 
-All endpoints except `/api/health` require the `x-bridge-token: <GLOBAL_SECRET_TOKEN>` header.
+Data endpoints accept the HttpOnly `noting_session` cookie. During the transition, legacy `x-bridge-token` + `x-bridge-answer` headers remain supported for existing clients.
 
 | Method                | Endpoint             | Description                                                                                                                                 |
 | --------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET                   | `/api/health`        | Liveness probe + DB latency (unauthenticated)                                                                                               |
-| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` updated/created/alpha/manual)                                         |
+| GET/POST/DELETE       | `/api/session`       | Establish, inspect, or revoke the short-lived HttpOnly workspace session                                                                    |
+| GET                   | `/api/health`        | Liveness/readiness probe + DB latency (unauthenticated)                                                                                     |
+| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` and `?q=` full-content search for plaintext notes)                    |
 | POST/PATCH/DELETE     | `/api/notes`         | Create / rename-pin-archive-organize / trash a note (`?trash=1` lists trash, restore via `{id, action:"restore"}`, `&permanent=1` destroys) |
 | GET/POST/PATCH/DELETE | `/api/folders`       | Notebooks/folders with note counts (notes survive folder deletes as Unfiled)                                                                |
 | GET                   | `/api/usage`         | Storage aggregates (notes/files counts + bytes, trash counts) for Settings and future plan limits                                           |
-| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST accepts optional `base_updated_at` (409 on conflict) and `enc` marker                                   |
+| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST uses `base_version` and `mutation_id` for atomic conflict-safe saves and accepts an `enc` marker        |
 | GET                   | `/api/revisions`     | Last 20 revisions of a note (`?note_id=`)                                                                                                   |
 | GET                   | `/api/documents`     | Metadata; `?trash=1` lists soft-deleted (auto-purges after 30 days)                                                                         |
-| POST                  | `/api/documents`     | `{ id, action: "restore" }` restores from trash                                                                                             |
+| POST                  | `/api/documents`     | Restore or reindex a document (`{ id, action: "restore" }` / `"reindex"`)                                                                   |
 | DELETE                | `/api/documents?id=` | Soft-delete; `&permanent=1` destroys forever                                                                                                |
 | POST                  | `/api/upload`        | Multipart upload, 4.5MB limit; `enc=1` marks ciphertext; text files auto-index for search                                                   |
 | GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                     |
 | POST                  | `/api/ai`            | Format text via OpenRouter; returns original + warning on failure                                                                           |
 | POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                     |
 | GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                   |
-| POST                  | `/api/tokens`        | Self-service mint (visual human-check OR Turnstile fallback; returns `ntk_…` once)                                                          |
+| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                       |
 
 Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint.
 
 ## Deployment (Vercel)
 
-Set `GLOBAL_SECRET_TOKEN`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, and security headers.
+Set `GLOBAL_SECRET_TOKEN`, `CHALLENGE_SIGNING_SECRET`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. Keep public token creation disabled unless `PUBLIC_SELF_SERVICE_TOKENS=true` is intentionally configured. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, and security headers. Run `npm run purge:retention` from a daily scheduler to enforce trash, session, and rate-limit retention.
 
 ## Security model
 
-Single static bearer token, no accounts. Anyone holding the token has full access — treat it like a password. Rotate by generating a new value and updating every environment; the old token dies immediately.
+Each workspace is isolated by a high-entropy access token, security answer, and one-time recovery code. After unlock, the browser exchanges them for a short-lived HttpOnly session; the token and answer are not persisted in browser storage. Production token creation is disabled unless explicitly enabled.
 
-- Tokens are compared in constant time and validation fails closed when the env var is unset.
-- The lock button in the top bar clears the token from the browser (per-device logout).
-- Served with `Referrer-Policy: no-referrer`, HSTS, `nosniff`, `frame-ancestors: none`, and a tight CSP.
-- Note/AI bodies are capped (512KB notes, 200KB AI → 413); downloads are header-auth only (legacy `?token=` URL removed).
-- Rate limits are DB-backed so they survive cold starts; CI blocks committed secrets (`sk-or-v1`, `npg_`, private keys).
-- Backup imports are pre-scanned against zip-bomb limits (25MB per file, 100MB total).
-- RAG answers are instructed to treat document excerpts as untrusted data, wrapped in `<documents>` tags.
-- Token minting is gated by a built-in visual human-check (tap-the-odd-tile, HMAC-signed, single-use nonces, 800ms timing gate, honeypot — no vendor, no tracking). If the custom check can't load or keeps failing, the UI offers a Cloudflare Turnstile (free Managed) fallback that is lazy-loaded only on demand; the happy path loads zero third-party code.
+- Session cookies are `HttpOnly`, `SameSite=Strict`, scoped to the workspace, and revocable from the lock button.
+- Note writes use content versions, mutation IDs, transactional revisions, and conflict recovery; stale devices cannot silently overwrite newer content.
+- Offline edits are encrypted per workspace/note in IndexedDB and replayed only after authentication.
+- Storage, file-count, and daily AI quotas are enforced server-side.
+- Note/AI bodies and uploads are capped; authenticated responses and downloads are `private, no-store`.
+- RAG answers treat document excerpts as untrusted data and are wrapped in `<documents>` tags.
+- Migrations are checksummed and readiness fails when the schema is incomplete.
+- Token minting is disabled by default in production; when explicitly enabled, it requires the built-in human-check or Turnstile.
 
-Optional end-to-end encryption (Settings → toggle) encrypts note bodies and file bytes in the browser with AES-GCM-256, using a key derived from the access token (`SHA-256("noting-e2e:" + token)`). The server and Neon then only ever see ciphertext. Threat-model notes:
-
-- File **names** and MIME types stay plaintext so listing, search, and downloads keep working.
-- Encrypted content is excluded from AI formatting and document search (the server can't read it).
-- Rotating the access token **breaks decryption** of existing encrypted content — export a backup first, rotate, then re-import.
-- The `.zip` backup is **not** encrypted — it contains decrypted content, so store it somewhere safe.
-- Verify the key fingerprint shown in Settings matches across your devices; a mismatch means the tokens differ and decryption will fail there.
+End-to-end encryption encrypts note bodies and file bytes in the browser with AES-GCM-256. The current vault key is derived from the access token for cross-device compatibility; filenames, MIME types, titles, folders, and tags remain server-visible metadata. Encrypted content is excluded from server AI formatting and document search. Backups decrypt content in the browser and must be stored as sensitive files.

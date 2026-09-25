@@ -3,11 +3,6 @@ import { requireUser } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
 import { getSql } from '../src/lib/db.js';
 
-/**
- * Storage usage for the Settings page and future Free/Paid caps.
- * Read-only aggregate scoped to the caller — no PII, no content,
- * no cross-user totals.
- */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const userId = await requireUser(req, res);
   if (!userId) return;
@@ -18,38 +13,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const sql = getSql();
   try {
-    const notes = await sql
-      .query(
-        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(content)), 0)::int AS bytes FROM notes WHERE user_id = $1 AND deleted_at IS NULL',
+    const sql = getSql();
+    const [notes, trashedNotes, files, trashedFiles] = await Promise.all([
+      sql.query(
+        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(content)), 0)::bigint AS bytes FROM notes WHERE user_id = $1 AND deleted_at IS NULL',
         [userId],
-      )
-      .catch(() => [{ count: 0, bytes: 0 }]);
-    const trashedNotes = await sql
-      .query('SELECT COUNT(*)::int AS count FROM notes WHERE user_id = $1 AND deleted_at IS NOT NULL', [
-        userId,
-      ])
-      .catch(() => [{ count: 0 }]);
-    const files = await sql
-      .query(
-        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(file_data)), 0)::int AS bytes FROM documents WHERE user_id = $1 AND deleted_at IS NULL',
+      ),
+      sql.query(
+        'SELECT COUNT(*)::int AS count FROM notes WHERE user_id = $1 AND deleted_at IS NOT NULL',
         [userId],
-      )
-      .catch(() => [{ count: 0, bytes: 0 }]);
-    const trashedFiles = await sql
-      .query('SELECT COUNT(*)::int AS count FROM documents WHERE user_id = $1 AND deleted_at IS NOT NULL', [
-        userId,
-      ])
-      .catch(() => [{ count: 0 }]);
+      ),
+      sql.query(
+        'SELECT COUNT(*)::int AS count, COALESCE(SUM(octet_length(file_data)), 0)::bigint AS bytes FROM documents WHERE user_id = $1 AND deleted_at IS NULL',
+        [userId],
+      ),
+      sql.query(
+        'SELECT COUNT(*)::int AS count FROM documents WHERE user_id = $1 AND deleted_at IS NOT NULL',
+        [userId],
+      ),
+    ]);
     res.status(200).json({
       notes: { count: notes[0].count, bytes: Number(notes[0].bytes) },
       trashedNotes: { count: trashedNotes[0].count },
       files: { count: files[0].count, bytes: Number(files[0].bytes) },
       trashedFiles: { count: trashedFiles[0].count },
     });
-  } catch (e) {
-    console.error('usage endpoint error', e);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error) {
+    console.error('usage endpoint error', error);
+    res.status(503).json({ error: 'Usage is temporarily unavailable' });
   }
 }

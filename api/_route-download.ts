@@ -46,8 +46,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const id = req.query?.id;
-  if (!id || Number.isNaN(parseInt(id as string, 10))) {
+  const rawId = req.query?.id;
+  const id = typeof rawId === 'string' && /^\d+$/.test(rawId) ? Number(rawId) : NaN;
+  if (!Number.isSafeInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Missing id query parameter' });
     return;
   }
@@ -55,9 +56,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sql = getSql();
 
   try {
+    const includeTrash = req.query?.trash === '1';
     const rows = await sql.query(
-      'SELECT file_name, file_type, file_data, enc FROM documents WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
-      [parseInt(id as string, 10), userId],
+      'SELECT file_name, file_type, file_data, enc FROM documents WHERE id = $1 AND user_id = $2 AND ($3 OR deleted_at IS NULL)',
+      [id, userId, includeTrash],
     );
     if (rows.length === 0) {
       res.status(404).json({ error: 'Document not found' });
@@ -85,8 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('x-enc', enc);
 
     // ASCII-safe filename for basic compatibility
-    // eslint-disable-next-line no-control-regex
-    const asciiName = fileName.replace(/[^\x00-\x7F]/g, '_');
+    const asciiName = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
     // RFC 5987 encoded filename for Unicode support
     const encodedName = encodeRFC5987(fileName);
     res.setHeader(

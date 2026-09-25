@@ -30,20 +30,26 @@ let nextId = 0;
 export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<QAItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const ask = useMutation({
     mutationFn: askQuestion,
+    onMutate: () => setError(null),
     onSuccess: (result, asked) => {
       nextId += 1;
+      setQuestion('');
       setHistory((prev) => [{ id: nextId, question: asked, result }, ...prev]);
       if (result.fallback && result.warning) toast.warning(result.warning);
     },
-    onError: (err) => {
+    onError: (err, asked) => {
+      setQuestion(asked);
       if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
         onUnauthorized();
         return;
       }
-      toast.error(err instanceof Error ? err.message : 'Question failed');
+      const message = err instanceof Error ? err.message : 'Question failed';
+      setError(message);
+      toast.error(message);
     },
   });
 
@@ -51,7 +57,6 @@ export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
     event.preventDefault();
     const trimmed = question.trim();
     if (!trimmed || ask.isPending) return;
-    setQuestion('');
     ask.mutate(trimmed);
   }
 
@@ -78,7 +83,23 @@ export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
           </Button>
         </form>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-0.5">
+        {error && !ask.isPending && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+            <span>{error}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!question.trim()}
+              onClick={() => ask.mutate(question.trim())}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+        <div
+          aria-live="polite"
+          className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-0.5"
+        >
           {ask.isPending && (
             <div className="flex flex-col gap-2 rounded-xl border border-zinc-800/70 bg-zinc-900/50 p-3.5">
               <Skeleton className="h-4 w-2/3" />

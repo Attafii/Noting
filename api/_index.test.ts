@@ -30,6 +30,12 @@ describe('chunkText', () => {
     expect(chunks.every((c) => c.length <= 1100)).toBe(true);
   });
 
+  it('splits a single long paragraph without dropping the remainder', () => {
+    const chunks = chunkText('x'.repeat(2400));
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.join('').replace(/\s/g, '').length).toBeGreaterThanOrEqual(2400);
+  });
+
   it('caps runaway input at 60 chunks', () => {
     const huge = Array.from({ length: 500 }, (_, i) => `para ${i} xxxxxxxxxxxxxxxxxxxx`).join(
       '\n\n',

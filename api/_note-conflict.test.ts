@@ -27,7 +27,9 @@ describe('parseVersionTs', () => {
 
 describe('isConflictingVersion (optimistic-concurrency anchor)', () => {
   it('accepts identical anchors', () => {
-    expect(isConflictingVersion('2026-09-16T12:00:00.000Z', '2026-09-16T12:00:00.000Z')).toBe(false);
+    expect(isConflictingVersion('2026-09-16T12:00:00.000Z', '2026-09-16T12:00:00.000Z')).toBe(
+      false,
+    );
   });
 
   it('accepts the same instant in different shapes (driver skew)', () => {
@@ -41,13 +43,13 @@ describe('isConflictingVersion (optimistic-concurrency anchor)', () => {
   });
 
   it('absorbs the autosave double-submit race (sub-second drift)', () => {
-    expect(isConflictingVersion('2026-09-16T12:00:00.000Z', '2026-09-16T12:00:00.900Z')).toBe(false);
+    expect(isConflictingVersion('2026-09-16T12:00:00.000Z', '2026-09-16T12:00:00.900Z')).toBe(
+      false,
+    );
   });
 
   it('flags genuine moves past the tolerance', () => {
-    expect(
-      isConflictingVersion('2026-09-16T12:05:00.000Z', '2026-09-16T12:00:00.000Z'),
-    ).toBe(true);
+    expect(isConflictingVersion('2026-09-16T12:05:00.000Z', '2026-09-16T12:00:00.000Z')).toBe(true);
     const base = Date.parse('2026-09-16T12:00:00.000Z');
     expect(
       isConflictingVersion(

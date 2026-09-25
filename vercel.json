@@ -11,6 +11,7 @@
     { "source": "/api/note", "destination": "/api/router?route=note" },
     { "source": "/api/notes", "destination": "/api/router?route=notes" },
     { "source": "/api/revisions", "destination": "/api/router?route=revisions" },
+    { "source": "/api/session", "destination": "/api/router?route=session" },
     { "source": "/api/token-question", "destination": "/api/router?route=token-question" },
     { "source": "/api/tokens", "destination": "/api/router?route=tokens" },
     { "source": "/api/upload", "destination": "/api/router?route=upload" },
@@ -46,6 +47,8 @@
       "source": "/(.*)",
       "headers": [
         { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "same-origin" },
         { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },

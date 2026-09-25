@@ -16,6 +16,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!(await enforceRateLimit(req, res))) return;
 
   const started = Date.now();
+  const configOk = Boolean(
+    process.env.NEON_CONNECTION_STRING &&
+    process.env.GLOBAL_SECRET_TOKEN &&
+    (process.env.CHALLENGE_SIGNING_SECRET || process.env.GLOBAL_SECRET_TOKEN),
+  );
   try {
     const sql = getSql();
     await withQueryTimeout(sql.query('SELECT 1'), QUERY_TIMEOUT_MS);
@@ -24,7 +29,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const rows = await withQueryTimeout(
         sql.query(
           `SELECT tablename FROM pg_tables WHERE schemaname = 'public'
-           AND tablename IN ('access_tokens', 'hint_grants', 'rate_limit_buckets')`,
+           AND tablename IN (
+             'access_tokens', 'hint_grants', 'rate_limit_buckets', 'notes', 'documents',
+             'note_revisions', 'folders', 'note_tags', 'auth_sessions', 'index_jobs', 'workspace_invites'
+           )`,
         ),
         QUERY_TIMEOUT_MS,
       );
@@ -33,10 +41,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .map((r) => (r as { tablename?: unknown }).tablename)
           .filter((t) => typeof t === 'string'),
       );
-      tables_ok =
-        names.has('access_tokens') && names.has('hint_grants') && names.has('rate_limit_buckets');
+      tables_ok = [
+        'access_tokens',
+        'hint_grants',
+        'rate_limit_buckets',
+        'notes',
+        'documents',
+        'note_revisions',
+        'folders',
+        'note_tags',
+        'auth_sessions',
+        'index_jobs',
+        'workspace_invites',
+      ].every((name) => names.has(name));
     } catch (e) {
       console.error('health tables check failed', e);
+    }
+    let migrations_ok = false;
+    try {
+      const rows = await withQueryTimeout(
+        sql.query("SELECT 1 FROM schema_migrations WHERE name = 'migrate-011-integrity' LIMIT 1"),
+        QUERY_TIMEOUT_MS,
+      );
+      migrations_ok = rows.length === 1;
+    } catch (error) {
+      console.error('health migration check failed', error);
     }
     let search_ready = false;
     try {
@@ -57,15 +86,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (e) {
       console.error('health search check failed', e);
     }
-    const ok = tables_ok;
-    res
-      .status(ok ? 200 : 503)
-      .json({ ok, db_reachable: true, tables_ok, search_ready, latency_ms: Date.now() - started });
+    const ok = configOk && tables_ok && migrations_ok;
+    res.status(ok ? 200 : 503).json({
+      ok,
+      db_reachable: true,
+      tables_ok,
+      migrations_ok,
+      config_ok: configOk,
+      search_ready,
+      latency_ms: Date.now() - started,
+    });
   } catch (e) {
     console.error('health check failed', e);
-    res
-      .status(503)
-      .json({ ok: false, db_reachable: false, tables_ok: false, latency_ms: Date.now() - started });
+    res.status(503).json({
+      ok: false,
+      db_reachable: false,
+      tables_ok: false,
+      migrations_ok: false,
+      config_ok: configOk,
+      latency_ms: Date.now() - started,
+    });
   }
 }
 

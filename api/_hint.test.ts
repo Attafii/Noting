@@ -52,7 +52,10 @@ describe('POST /api/hint (server-enforced once per session)', () => {
       .mockResolvedValueOnce([]) // purge
       .mockResolvedValueOnce([{ token_id: 'u_1' }]); // INSERT … RETURNING
     const first = res();
-    await hintHandler(req({ token: 'ntk_abc', session_id: SESSION }), first as unknown as VercelResponse);
+    await hintHandler(
+      req({ token: 'ntk_abc', session_id: SESSION }),
+      first as unknown as VercelResponse,
+    );
     expect(first.statusCode).toBe(200);
     expect(first.body).toEqual({ hint: 'blue door' });
 
@@ -76,14 +79,20 @@ describe('POST /api/hint (server-enforced once per session)', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ token_id: 'u_1' }]);
     const r = res();
-    await hintHandler(req({ token: 'ntk_abc', session_id: SESSION }), r as unknown as VercelResponse);
+    await hintHandler(
+      req({ token: 'ntk_abc', session_id: SESSION }),
+      r as unknown as VercelResponse,
+    );
     expect(r.statusCode).toBe(200);
     expect(r.body).toEqual({ hint: '' });
   });
 
   it('rejects malformed session ids and unknown tokens generically', async () => {
     const bad = res();
-    await hintHandler(req({ token: 'ntk_abc', session_id: 'short' }), bad as unknown as VercelResponse);
+    await hintHandler(
+      req({ token: 'ntk_abc', session_id: 'short' }),
+      bad as unknown as VercelResponse,
+    );
     expect(bad.statusCode).toBe(400);
 
     dataQuery.mockResolvedValueOnce([]);

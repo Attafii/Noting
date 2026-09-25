@@ -4,7 +4,7 @@ import { enforceRateLimit } from './_ratelimit.js';
 import { getSql } from '../src/lib/db.js';
 
 const ACTIVE_COLUMNS =
-  'id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at';
+  'id, file_name, file_type, enc, content_version, index_status, index_error, indexed_at, octet_length(file_data) AS file_size, uploaded_at';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const userId = await requireUser(req, res);
@@ -12,6 +12,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!(await enforceRateLimit(req, res))) return;
 
   const sql = getSql();
+  void import('./_index.js')
+    .then((module) => module.processIndexJobs(userId))
+    .catch((error) => console.error('index job processing error', error));
 
   // Trash view: trashed docs + lazy purge of anything older than 30 days.
   if (req.method === 'GET' && req.query?.trash === '1') {
@@ -49,6 +52,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     // Restore action: { id, action: 'restore' }.
     const { id, action } = (req.body ?? {}) as { id?: number; action?: string };
+    if (action === 'reindex' && typeof id === 'number' && Number.isInteger(id)) {
+      const rows = await sql.query(
+        `UPDATE documents SET index_status = 'queued', index_error = NULL, indexed_at = NULL
+         WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL RETURNING id`,
+        [id, userId],
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+      await sql.query(
+        `INSERT INTO index_jobs (user_id, document_id, status)
+         SELECT $1, $2, 'queued'
+         WHERE NOT EXISTS (
+           SELECT 1 FROM index_jobs WHERE document_id = $2 AND status IN ('queued', 'processing')
+         )`,
+        [userId, id],
+      );
+      res.status(200).json({ ok: true });
+      return;
+    }
     if (action !== 'restore' || typeof id !== 'number' || !Number.isInteger(id)) {
       res.status(400).json({ error: 'Expected { id, action: "restore" }' });
       return;
@@ -80,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.query?.permanent === '1') {
         // Hard delete; chunks cascade via FK.
         const rows = await sql.query(
-          'DELETE FROM documents WHERE id = $1 AND user_id = $2 RETURNING id',
+          'DELETE FROM documents WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL RETURNING id',
           [id, userId],
         );
         if (rows.length === 0) {
@@ -109,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function parseId(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  const parsed = parseInt(value, 10);
-  return Number.isNaN(parsed) ? null : parsed;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }

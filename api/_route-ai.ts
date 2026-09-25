@@ -3,6 +3,7 @@ import { requireUser } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
 import { bodyTooLargeMessage, checkBodySize, MAX_AI_BYTES } from './_limits.js';
 import { aiConfigured, chatComplete } from './_ai.js';
+import { consumeAiBudget, QuotaError } from './_quota.js';
 
 const SYSTEM_PROMPT =
   'Clean, format, and structure this scratchpad note efficiently using clean markdown while preserving structural integrity.';
@@ -24,7 +25,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const { text } = req.body as { text: string };
+  const { text, encrypted } = req.body as { text: string; encrypted?: boolean };
+  if (encrypted === true) {
+    res.status(400).json({ error: 'AI formatting is unavailable for encrypted content' });
+    return;
+  }
   if (typeof text !== 'string' || text.length === 0) {
     res.status(400).json({ error: 'text must be non-empty string' });
     return;
@@ -42,6 +47,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fallback: true,
       warning: 'AI formatting is not configured — original text kept.',
     });
+    return;
+  }
+
+  try {
+    await consumeAiBudget(userId);
+  } catch (error) {
+    if (error instanceof QuotaError) {
+      res.status(error.status).json({ error: error.message });
+      return;
+    }
+    res.status(503).json({ error: 'AI quota service unavailable' });
     return;
   }
 

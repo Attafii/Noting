@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import {
   ApiError,
+  createSession,
   fetchChallenge,
   fetchHint,
   fetchQuestion,
@@ -24,7 +25,7 @@ import {
   type Challenge,
   type ChallengeSolution,
 } from '../lib/api';
-import { getSessionId, getToken, setAnswer, setToken } from '../lib/token';
+import { getSessionId, getToken, setAnswer, setSessionActive, setToken } from '../lib/token';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
@@ -134,8 +135,11 @@ export function TokenGate({ onSaved }: TokenGateProps) {
         </Card>
 
         <p className="mt-4 text-center text-[11px] leading-relaxed text-zinc-600">
-          No email, no tracking, no password resets. Your token + answer never leave this browser
-          except to unlock — lose both and your notes are unrecoverable.
+          No email or password resets. Your token + answer stay in this tab; lose both and your
+          notes are unrecoverable.{' '}
+          <a href="/welcome" className="text-accent-300 underline underline-offset-2">
+            Learn more
+          </a>
         </p>
       </motion.div>
     </div>
@@ -159,6 +163,8 @@ function UnlockForm({
   const [question, setQuestion] = useState<string | null>(null);
   const [hintAvailable, setHintAvailable] = useState(true);
   const [answer, setAnswerValue] = useState('');
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
@@ -208,26 +214,33 @@ function UnlockForm({
     }
   }
 
-  function handleUnlock(event: FormEvent) {
+  async function handleUnlock(event: FormEvent) {
     event.preventDefault();
     const cleanToken = token.trim();
     if (!cleanToken) {
       toast.error('Paste your access token first');
       return;
     }
-    if (!answer) {
-      toast.error('Type your security answer');
+    if (recoveryMode ? !recoveryCode.trim() : !answer) {
+      toast.error(recoveryMode ? 'Enter your recovery code' : 'Type your security answer');
       return;
     }
     setUnlocking(true);
-    // Persist the token for convenience, keep the answer in memory only.
-    setToken(cleanToken);
-    setAnswer(answer);
-    // Let the workspace verify (wrong answers bounce back to this gate).
-    setTimeout(() => {
+    try {
+      await createSession(
+        cleanToken,
+        recoveryMode ? '' : answer,
+        recoveryMode ? recoveryCode.trim() : undefined,
+      );
+      setToken(cleanToken);
+      setAnswer(recoveryMode ? '' : answer);
+      setSessionActive(true);
       onSaved(cleanToken);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not unlock workspace');
+    } finally {
       setUnlocking(false);
-    }, 60);
+    }
   }
 
   return (
@@ -235,8 +248,7 @@ function UnlockForm({
       <div>
         <h1 className="text-[15px] font-semibold text-zinc-100">Welcome back</h1>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
-          Your token unlocks the prompt — your answer opens the door. Both are required, every
-          visit.
+          Your token unlocks the workspace — your answer or recovery code opens the door.
         </p>
       </div>
 
@@ -272,7 +284,42 @@ function UnlockForm({
           {fetching ? <Loader2 className="animate-spin" /> : <KeyRound />}
           {fetching ? 'Finding your question…' : 'Fetch my question'}
         </Button>
+        <button
+          type="button"
+          onClick={() => setRecoveryMode(true)}
+          className="self-start text-xs text-accent-300 underline underline-offset-2"
+        >
+          I have a recovery code
+        </button>
       </form>
+
+      {recoveryMode && !question && (
+        <form
+          onSubmit={handleUnlock}
+          className="flex flex-col gap-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3.5"
+        >
+          <div>
+            <label
+              htmlFor="recovery-code-direct"
+              className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+            >
+              Recovery code
+            </label>
+            <Input
+              id="recovery-code-direct"
+              autoComplete="one-time-code"
+              placeholder="rec_…"
+              value={recoveryCode}
+              onChange={(e) => setRecoveryCode(e.target.value)}
+              className="mt-1"
+            />
+          </div>
+          <Button type="submit" variant="accent" disabled={unlocking || !recoveryCode.trim()}>
+            {unlocking ? <Loader2 className="animate-spin" /> : <BadgeCheck />}
+            {unlocking ? 'Unlocking…' : 'Unlock with recovery code'}
+          </Button>
+        </form>
+      )}
 
       {question && (
         <motion.form
@@ -287,26 +334,53 @@ function UnlockForm({
             </p>
             <p className="mt-1 text-[13px] font-medium text-zinc-100">“{question}”</p>
           </div>
-          <div className="relative">
-            <Input
-              type={showAnswer ? 'text' : 'password'}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Your answer (case doesn’t matter)"
-              value={answer}
-              onChange={(e) => setAnswerValue(e.target.value)}
-              aria-label="Security answer"
-              className="pr-10"
-            />
-            <button
-              type="button"
-              onClick={() => setShowAnswer((v) => !v)}
-              aria-label={showAnswer ? 'Hide answer' : 'Show answer'}
-              className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer rounded p-1 text-zinc-500 hover:text-zinc-200"
-            >
-              {showAnswer ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            </button>
-          </div>
+          {recoveryMode ? (
+            <div>
+              <label
+                htmlFor="recovery-code"
+                className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+              >
+                Recovery code
+              </label>
+              <Input
+                id="recovery-code"
+                autoComplete="one-time-code"
+                spellCheck={false}
+                placeholder="rec_…"
+                value={recoveryCode}
+                onChange={(e) => setRecoveryCode(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          ) : (
+            <div className="relative">
+              <Input
+                type={showAnswer ? 'text' : 'password'}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Your answer (case doesn’t matter)"
+                value={answer}
+                onChange={(e) => setAnswerValue(e.target.value)}
+                aria-label="Security answer"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAnswer((v) => !v)}
+                aria-label={showAnswer ? 'Hide answer' : 'Show answer'}
+                className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer rounded p-1 text-zinc-500 hover:text-zinc-200"
+              >
+                {showAnswer ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setRecoveryMode((value) => !value)}
+            className="self-start text-xs text-accent-300 underline underline-offset-2"
+          >
+            {recoveryMode ? 'Use security answer instead' : 'Use recovery code instead'}
+          </button>
 
           {hint === null ? (
             <button
@@ -340,12 +414,18 @@ function UnlockForm({
             </div>
           )}
 
-          <Button type="submit" variant="accent" disabled={unlocking || !answer}>
+          <Button
+            type="submit"
+            variant="accent"
+            disabled={unlocking || (recoveryMode ? !recoveryCode.trim() : !answer)}
+          >
             {unlocking ? <Loader2 className="animate-spin" /> : <BadgeCheck />}
             {unlocking ? 'Unlocking…' : 'Unlock workspace'}
           </Button>
           <p className="text-center font-mono text-[10px] text-zinc-600">
-            answer stays in this tab’s memory only — never saved
+            {recoveryMode
+              ? 'Recovery code stays in this tab’s memory only'
+              : 'answer stays in this tab’s memory only — never saved'}
           </p>
         </motion.form>
       )}
@@ -375,6 +455,7 @@ function GenerateForm({
   initialToken: string | null;
 }) {
   const [label, setLabel] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [hint, setHint] = useState('');
@@ -394,10 +475,13 @@ function GenerateForm({
   // Bumped to remount the widget (fresh token) after a failed/used attempt.
   const [turnstileKey, setTurnstileKey] = useState(0);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
-  const [result, setResult] = useState<{ token: string; question: string } | null>(
-    initialToken ? { token: initialToken, question: '' } : null,
-  );
+  const [result, setResult] = useState<{
+    token: string;
+    recoveryCode: string;
+    question: string;
+  } | null>(initialToken ? { token: initialToken, recoveryCode: '', question: '' } : null);
   const [copied, setCopied] = useState(false);
+  const [recoveryCopied, setRecoveryCopied] = useState(false);
   const [savedAck, setSavedAck] = useState(false);
   // Timing + interaction signals for the human-check (measured from render).
   const issuedAtRef = useRef(0);
@@ -482,6 +566,7 @@ function GenerateForm({
     try {
       const res = await mintToken({
         label: label.trim() || undefined,
+        inviteCode: inviteCode.trim() || undefined,
         question: question.trim(),
         answer: answer.trim(),
         hint: hint.trim() || undefined,
@@ -493,7 +578,11 @@ function GenerateForm({
       setSelected(null);
       setTurnstileToken(null);
       setFailCount(0);
-      setResult({ token: res.token_plaintext, question: res.question });
+      setResult({
+        token: res.token_plaintext,
+        recoveryCode: res.recovery_code,
+        question: res.question,
+      });
     } catch (err) {
       if (err instanceof Error && err.message.includes('Human-check')) {
         const next = failCount + 1;
@@ -533,6 +622,17 @@ function GenerateForm({
     }
   }
 
+  async function handleCopyRecovery() {
+    if (!result?.recoveryCode) return;
+    try {
+      await navigator.clipboard.writeText(result.recoveryCode);
+      setRecoveryCopied(true);
+      setTimeout(() => setRecoveryCopied(false), 2000);
+    } catch {
+      toast.error('Copy failed — select the recovery code manually');
+    }
+  }
+
   if (result) {
     return (
       <div className="flex flex-col gap-4">
@@ -561,6 +661,26 @@ function GenerateForm({
           </div>
         </div>
 
+        {result.recoveryCode && (
+          <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3.5">
+            <p className="font-mono text-[11px] tracking-[0.14em] text-emerald-300 uppercase">
+              Recovery code — copy it now
+            </p>
+            <code className="mt-1.5 block font-mono text-[13px] break-all text-emerald-200 select-all">
+              {result.recoveryCode}
+            </code>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-2"
+              onClick={() => void handleCopyRecovery()}
+            >
+              {recoveryCopied ? <Check /> : <Copy />}
+              {recoveryCopied ? 'Copied' : 'Copy recovery code'}
+            </Button>
+          </div>
+        )}
+
         <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3.5 text-xs leading-relaxed text-zinc-300">
           <input
             type="checkbox"
@@ -569,8 +689,8 @@ function GenerateForm({
             className="mt-0.5 size-4 accent-amber-400"
           />
           <span>
-            I saved my token <span className="text-zinc-100">and</span> my answer somewhere safe. I
-            understand both are required on every visit and neither can be recovered.
+            I saved my token, recovery code, and answer somewhere safe. I understand they cannot be
+            recovered or reset.
           </span>
         </label>
 
@@ -581,7 +701,7 @@ function GenerateForm({
             if (!result) return;
             setToken(result.token);
             onDone(result.token);
-            toast.success('Token saved in this browser — now unlock with your answer');
+            toast.success('Token ready — unlock with your answer or recovery code');
           }}
         >
           I saved it — take me to Unlock
@@ -591,9 +711,11 @@ function GenerateForm({
             setResult(null);
             setSavedAck(false);
             setCopied(false);
+            setRecoveryCopied(false);
             setQuestion('');
             setHint('');
             setLabel('');
+            setInviteCode('');
             setSelected(null);
             setFailCount(0);
             setTurnstileToken(null);
@@ -615,16 +737,21 @@ function GenerateForm({
       <div>
         <h1 className="text-[15px] font-semibold text-zinc-100">Create your personal token</h1>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
-          Self-service, no email. Your question + answer become the second key to your notes.
+          Self-service, no email. Your question, answer, and recovery code become the keys to your
+          notes.
         </p>
       </div>
 
       <form onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+          <label
+            htmlFor="token-label"
+            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+          >
             Nickname <span className="text-zinc-700 normal-case">(optional)</span>
           </label>
           <Input
+            id="token-label"
             placeholder="e.g. laptop"
             value={label}
             maxLength={40}
@@ -634,10 +761,31 @@ function GenerateForm({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+          <label
+            htmlFor="token-invite"
+            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+          >
+            Invite code <span className="text-zinc-700 normal-case">(private deployments)</span>
+          </label>
+          <Input
+            id="token-invite"
+            placeholder="Required when self-service is invite-only"
+            value={inviteCode}
+            maxLength={200}
+            onChange={(e) => setInviteCode(e.target.value)}
+            autoComplete="one-time-code"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="token-question"
+            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+          >
             Security question
           </label>
           <Input
+            id="token-question"
             placeholder="e.g. What street did I grow up on?"
             value={question}
             maxLength={140}
@@ -647,10 +795,14 @@ function GenerateForm({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+          <label
+            htmlFor="token-answer"
+            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+          >
             Answer <span className="text-zinc-700 normal-case">(case doesn’t matter)</span>
           </label>
           <Input
+            id="token-answer"
             type="password"
             placeholder="Something only you know"
             value={answer}
@@ -661,11 +813,15 @@ function GenerateForm({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+          <label
+            htmlFor="token-hint"
+            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+          >
             Hint{' '}
             <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
           </label>
           <Input
+            id="token-hint"
             placeholder="e.g. the one with the blue door"
             value={hint}
             maxLength={200}

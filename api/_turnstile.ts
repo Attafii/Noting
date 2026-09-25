@@ -66,15 +66,16 @@ export async function verifyTurnstile(token: unknown): Promise<boolean> {
     if (!res.ok) return false;
     const body = (await res.json()) as SiteverifyResponse;
     if (body.success !== true) return false;
-    // Hostname allowlist: the token must have been minted for our widget.
-    if (typeof body.hostname === 'string' && body.hostname.length > 0) {
-      if (!allowedHostnames().includes(body.hostname.toLowerCase())) return false;
+    if (
+      typeof body.hostname !== 'string' ||
+      !allowedHostnames().includes(body.hostname.toLowerCase())
+    ) {
+      return false;
     }
-    // Freshness: reject tokens minted long ago (replay blunting).
-    if (typeof body.challenge_ts === 'string' && body.challenge_ts.length > 0) {
-      const ts = Date.parse(body.challenge_ts);
-      if (!Number.isFinite(ts)) return false;
-      if (Date.now() - ts > TOKEN_FRESHNESS_MS) return false;
+    if (typeof body.challenge_ts !== 'string' || body.challenge_ts.length === 0) return false;
+    const ts = Date.parse(body.challenge_ts);
+    if (!Number.isFinite(ts) || Date.now() - ts > TOKEN_FRESHNESS_MS || ts - Date.now() > 60_000) {
+      return false;
     }
     return true;
   } catch {

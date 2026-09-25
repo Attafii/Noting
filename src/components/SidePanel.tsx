@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { useCallback, useEffect, useState } from 'react';
 import { Files, Sparkles } from 'lucide-react';
 import { AskPanel } from './AskPanel';
 import DocumentList from './DocumentList';
@@ -9,23 +8,32 @@ import { cn } from '../lib/utils';
 
 interface SidePanelProps {
   onUnauthorized: () => void;
+  onTabChange?: (tab: 'files' | 'ask') => void;
 }
 
-export function SidePanel({ onUnauthorized }: SidePanelProps) {
+export function SidePanel({ onUnauthorized, onTabChange }: SidePanelProps) {
   const [tab, setTab] = useState<'files' | 'ask'>('files');
+
+  const selectTab = useCallback(
+    (next: 'files' | 'ask') => {
+      setTab(next);
+      onTabChange?.(next);
+    },
+    [onTabChange],
+  );
 
   // External tab requests (e.g. command palette "Go to Ask").
   useEffect(() => {
     const go = (event: Event) => {
       const next = (event as CustomEvent<'files' | 'ask'>).detail;
-      if (next === 'files' || next === 'ask') setTab(next);
+      if (next === 'files' || next === 'ask') selectTab(next);
     };
     window.addEventListener(SHORTCUT_EVENTS.sideTab, go);
     return () => window.removeEventListener(SHORTCUT_EVENTS.sideTab, go);
-  }, []);
+  }, [selectTab]);
 
   function handleOpenDocument(documentId: number) {
-    setTab('files');
+    selectTab('files');
     // Let the tab switch commit before asking the list to open the preview.
     setTimeout(() => {
       window.dispatchEvent(
@@ -43,44 +51,25 @@ export function SidePanel({ onUnauthorized }: SidePanelProps) {
       >
         <SideTab
           active={tab === 'files'}
-          onClick={() => setTab('files')}
+          onClick={() => selectTab('files')}
           icon={<Files className="size-3.5" />}
           label="Files"
         />
         <SideTab
           active={tab === 'ask'}
-          onClick={() => setTab('ask')}
+          onClick={() => selectTab('ask')}
           icon={<Sparkles className="size-3.5" />}
           label="Ask"
         />
       </div>
 
-      <AnimatePresence mode="wait" initial={false}>
-        {tab === 'files' ? (
-          <motion.div
-            key="files"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.16 }}
-            className="flex min-h-0 flex-col gap-4"
-          >
-            <FileDropzone onUnauthorized={onUnauthorized} />
-            <DocumentList onUnauthorized={onUnauthorized} />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="ask"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.16 }}
-            className="flex min-h-0 flex-col"
-          >
-            <AskPanel onUnauthorized={onUnauthorized} onOpenDocument={handleOpenDocument} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className={cn('flex min-h-0 flex-col gap-4', tab !== 'files' && 'hidden')}>
+        <FileDropzone onUnauthorized={onUnauthorized} />
+        <DocumentList onUnauthorized={onUnauthorized} />
+      </div>
+      <div className={cn('flex min-h-0 flex-col', tab !== 'ask' && 'hidden')}>
+        <AskPanel onUnauthorized={onUnauthorized} onOpenDocument={handleOpenDocument} />
+      </div>
     </div>
   );
 }

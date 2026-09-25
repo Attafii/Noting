@@ -1,27 +1,16 @@
 const TOKEN_KEY = 'bridge-token';
 const SELECTED_KEY = 'selected-note-id';
 
-/**
- * Token (ntk_…) is remembered in localStorage for convenience; the SECURITY
- * ANSWER lives only in module memory and is cleared on lock / reload — every
- * return visit re-types the answer, the answer is never persisted.
- */
+let memoryToken: string | null = null;
 let memoryAnswer: string | null = null;
+let sessionActive = false;
 
 export function getToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
+  return memoryToken;
 }
 
 export function setToken(token: string): void {
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    /* ignore */
-  }
+  memoryToken = token.trim() || null;
 }
 
 export function getAnswer(): string | null {
@@ -32,27 +21,42 @@ export function setAnswer(answer: string): void {
   memoryAnswer = answer;
 }
 
+export function setSessionActive(active: boolean): void {
+  sessionActive = active;
+}
+
+export function isSessionActive(): boolean {
+  return sessionActive;
+}
+
 export function clearToken(): void {
+  memoryToken = null;
+  memoryAnswer = null;
+  sessionActive = false;
   try {
     localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* ignore */
-  }
-  memoryAnswer = null;
-  try {
     localStorage.removeItem(SELECTED_KEY);
   } catch {
-    /* ignore */
+    return;
   }
 }
 
-export function bridgeHeaders(extra?: HeadersInit): HeadersInit {
-  const token = getToken();
-  return {
-    ...(token ? { 'x-bridge-token': token } : {}),
-    ...(memoryAnswer ? { 'x-bridge-answer': memoryAnswer } : {}),
-    ...extra,
-  };
+export function bridgeHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers();
+  if (!sessionActive) {
+    const token = getToken();
+    if (token) headers.set('x-bridge-token', token);
+    if (memoryAnswer) headers.set('x-bridge-answer', memoryAnswer);
+  }
+  if (!extra) return headers;
+  if (extra instanceof Headers) {
+    extra.forEach((value, key) => headers.set(key, value));
+  } else if (Array.isArray(extra)) {
+    for (const [key, value] of extra) headers.set(key, value);
+  } else {
+    for (const [key, value] of Object.entries(extra)) headers.set(key, value);
+  }
+  return headers;
 }
 
 /**

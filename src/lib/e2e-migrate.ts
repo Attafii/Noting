@@ -1,10 +1,13 @@
 import {
-  deleteDocument,
   fetchDocumentBlob,
   getNote,
   listDocuments,
   listNotes,
+  listRevisions,
+  listTrash,
+  listTrashedNotes,
   saveNote,
+  updateRevision,
   uploadFile,
 } from './api';
 import { decryptBytes, encryptBytes, encryptText, isEncryptedText, toBufferView } from './crypto';
@@ -31,7 +34,7 @@ async function requireKey(): Promise<CryptoKey> {
  */
 export async function encryptExistingNotes(onProgress?: MigrateProgress): Promise<MigrateResult> {
   const key = await requireKey();
-  const notes = await listNotes();
+  const notes = [...(await listNotes()), ...(await listTrashedNotes())];
   const targets = notes.filter((note) => !note.enc);
   let encrypted = 0;
   let skipped = 0;
@@ -42,11 +45,23 @@ export async function encryptExistingNotes(onProgress?: MigrateProgress): Promis
       if (full.enc || !full.content || isEncryptedText(full.content)) {
         skipped++;
       } else {
+        const revisions = await listRevisions(full.id);
+        for (const revision of revisions) {
+          if (!revision.enc && !isEncryptedText(revision.content)) {
+            await updateRevision({
+              noteId: full.id,
+              revisionId: revision.id,
+              content: await encryptText(key, revision.content),
+              enc: true,
+            });
+          }
+        }
         const cipher = await encryptText(key, full.content);
         await saveNote({
           id: targets[i].id,
           content: cipher,
-          baseUpdatedAt: full.updated_at,
+          baseVersion: full.content_version ?? 1,
+          mutationId: crypto.randomUUID(),
           enc: true,
         });
         encrypted++;
@@ -66,7 +81,7 @@ export async function encryptExistingNotes(onProgress?: MigrateProgress): Promis
  */
 export async function encryptExistingFiles(onProgress?: MigrateProgress): Promise<MigrateResult> {
   const key = await requireKey();
-  const docs = (await listDocuments()).filter((doc) => !doc.enc);
+  const docs = [...(await listDocuments()), ...(await listTrash())].filter((doc) => !doc.enc);
   let encrypted = 0;
   let failed = 0;
   for (let i = 0; i < docs.length; i++) {
@@ -78,8 +93,7 @@ export async function encryptExistingFiles(onProgress?: MigrateProgress): Promis
       const encFile = new File([toBufferView(cipher)], doc.file_name, {
         type: doc.file_type || 'application/octet-stream',
       });
-      await uploadFile(encFile, undefined, true);
-      await deleteDocument(doc.id, true);
+      await uploadFile(encFile, undefined, true, doc.id);
       encrypted++;
     } catch {
       failed++;

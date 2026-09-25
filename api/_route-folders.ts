@@ -11,22 +11,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sql = getSql();
 
   try {
-    await sql
-      .query(
-        'CREATE TABLE IF NOT EXISTS folders (id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, user_id TEXT DEFAULT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP)',
-      )
-      .catch(() => undefined);
-    await sql.query('ALTER TABLE folders ADD COLUMN IF NOT EXISTS user_id TEXT').catch(() => undefined);
-
     if (req.method === 'GET') {
-      const rows = await sql
-        .query(
-          'SELECT f.id, f.name, f.sort_order, f.created_at, COUNT(n.id)::int AS note_count ' +
-            'FROM folders f LEFT JOIN notes n ON n.folder_id = f.id AND n.deleted_at IS NULL AND n.user_id = $1 ' +
-            'WHERE f.user_id = $1 GROUP BY f.id ORDER BY f.sort_order ASC, f.name ASC',
-          [userId],
-        )
-        .catch(() => []);
+      const rows = await sql.query(
+        'SELECT f.id, f.name, f.sort_order, f.created_at, COUNT(n.id)::int AS note_count ' +
+          'FROM folders f LEFT JOIN notes n ON n.folder_id = f.id AND n.deleted_at IS NULL AND n.user_id = $1 ' +
+          'WHERE f.user_id = $1 GROUP BY f.id ORDER BY f.sort_order ASC, f.name ASC',
+        [userId],
+      );
       res.status(200).json(rows);
       return;
     }
@@ -77,19 +68,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (req.method === 'DELETE') {
       const raw = req.query?.id;
-      const id = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
-      if (Number.isNaN(id)) {
+      const id = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (!Number.isSafeInteger(id) || id <= 0) {
         res.status(400).json({ error: 'Missing id query parameter' });
         return;
       }
       // Notes survive — they become unfiled (FK is ON DELETE SET NULL where migrated).
-      await sql
-        .query('UPDATE notes SET folder_id = NULL WHERE folder_id = $1 AND user_id = $2', [id, userId])
-        .catch(() => undefined);
-      const rows = await sql.query('DELETE FROM folders WHERE id = $1 AND user_id = $2 RETURNING id', [
+      await sql.query('UPDATE notes SET folder_id = NULL WHERE folder_id = $1 AND user_id = $2', [
         id,
         userId,
       ]);
+      const rows = await sql.query(
+        'DELETE FROM folders WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, userId],
+      );
       if (rows.length === 0) {
         res.status(404).json({ error: 'Folder not found' });
         return;

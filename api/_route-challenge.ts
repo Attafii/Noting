@@ -19,11 +19,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(405).json({ error: 'Method not allowed' });
       return;
     }
-    if (!process.env.GLOBAL_SECRET_TOKEN) {
-      // Fail loudly in logs but stay available: issue/verify stay consistent
-      // (both use the same secret source), so minting keeps working while
-      // the deployer notices the misconfiguration.
-      console.error('challenge misconfigured — GLOBAL_SECRET_TOKEN is not set');
+    if (!process.env.CHALLENGE_SIGNING_SECRET && !process.env.GLOBAL_SECRET_TOKEN) {
+      res.status(503).json({ error: 'Human-check is not configured' });
+      return;
     }
     if (!(await enforceRateLimit(req, res, { limit: 30, store: memoryStore }))) return;
     // Single-use nonces — must never be cached anywhere.

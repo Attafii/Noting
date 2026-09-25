@@ -33,7 +33,6 @@ import {
   deleteFolder,
   deleteNote,
   listFolders,
-  listNotes,
   listNotesSorted,
   listTrashedNotes,
   restoreNote,
@@ -44,6 +43,8 @@ import {
   type NoteSort,
   type NoteSummary,
 } from '../lib/api';
+import { encryptText } from '../lib/crypto';
+import { getCryptoKey, useE2E } from '../lib/e2e';
 import { NOTE_TEMPLATES } from '../lib/note-templates';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
@@ -75,8 +76,13 @@ function handleApiError(err: unknown, onUnauthorized: () => void, fallback: stri
   toast.error(err instanceof Error ? err.message : fallback);
 }
 
+function newMutationId(): string {
+  return crypto.randomUUID();
+}
+
 export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSidebarProps) {
   const queryClient = useQueryClient();
+  const e2e = useE2E();
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -101,7 +107,11 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     }
   });
 
-  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
+  const notesQuery = useQuery({
+    queryKey: ['notes', sort, search],
+    queryFn: () => listNotesSorted(sort, search),
+    retry: false,
+  });
   const foldersQuery = useQuery({ queryKey: ['folders'], queryFn: listFolders, retry: false });
   const trashQuery = useQuery({
     queryKey: ['notes-trash'],
@@ -156,7 +166,21 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     mutationFn: async (opts: { title: string; body: string; folderId?: number | null }) => {
       const note = await createNote(opts.title, opts.folderId ?? undefined);
       if (opts.body) {
-        await saveNote({ id: note.id, content: opts.body, baseUpdatedAt: note.updated_at });
+        let content = opts.body;
+        let enc = false;
+        if (e2e) {
+          const key = await getCryptoKey();
+          if (!key) throw new Error('No encryption key available — re-enter your token');
+          content = await encryptText(key, opts.body);
+          enc = true;
+        }
+        await saveNote({
+          id: note.id,
+          content,
+          baseVersion: note.content_version ?? 1,
+          mutationId: newMutationId(),
+          enc,
+        });
       }
       return note;
     },
@@ -251,7 +275,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
   const matches = (note: NoteSummary) => {
     if (query) {
       const hay =
-        `${note.title} ${note.preview ?? ''} ${(note.tags ?? []).join(' ')}`.toLowerCase();
+        `${note.title} ${note.preview ?? ''} ${note.search_text ?? ''} ${(note.tags ?? []).join(' ')}`.toLowerCase();
       if (!hay.includes(query)) return false;
     }
     if (tagFilter && !(note.tags ?? []).includes(tagFilter)) return false;
@@ -437,7 +461,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search notes, tags…"
+          placeholder="Search notes, content, tags…"
           aria-label="Search notes"
           className="pl-8"
         />
@@ -449,7 +473,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
           value={sort}
           onChange={(e) => changeSort(e.target.value as NoteSort)}
           aria-label="Sort notes"
-          className="w-full cursor-pointer rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-1 text-xs text-zinc-300 focus:outline-none"
+          className="w-full cursor-pointer rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-1 text-xs text-zinc-300 "
         >
           {SORTS.map((s) => (
             <option key={s.key} value={s.key}>
@@ -524,7 +548,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
               }}
               placeholder="Folder name…"
               aria-label="New folder name"
-              className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 focus:outline-none"
+              className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 "
             />
             <button
               onClick={() => folderName.trim() && addFolder.mutate(folderName.trim())}
@@ -826,7 +850,11 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                             size="sm"
                             variant="ghost"
                             disabled={remove.isPending}
-                            onClick={() => remove.mutate({ id: note.id, permanent: true })}
+                            onClick={() => {
+                              if (window.confirm(`Permanently delete “${note.title}”?`)) {
+                                remove.mutate({ id: note.id, permanent: true });
+                              }
+                            }}
                             title="Delete forever"
                             className="hover:bg-red-950/50 hover:text-red-300"
                           >
@@ -966,7 +994,7 @@ function FolderPill({
           if (e.key === 'Escape') onRenameCommit(folder.name);
         }}
         aria-label="Folder name"
-        className="w-24 rounded-full border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px] text-zinc-100 focus:outline-none"
+        className="w-24 rounded-full border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[11px] text-zinc-100 "
       />
     );
   }
@@ -1007,42 +1035,39 @@ function FolderPill({
         if (!Number.isNaN(id)) onDropNote(id);
       }}
       className={cn(
-        'group flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+        'group flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
         active
           ? 'border-accent-600/50 bg-accent-500/15 text-accent-300'
           : 'border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-200',
         over && 'border-accent-500 bg-accent-500/10',
       )}
-      role="button"
-      tabIndex={0}
-      title={`Filter by ${folder.name} — drop notes here to file them (${folder.note_count})`}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onSelect();
-      }}
     >
-      <FolderInput className="size-3" />
-      {folder.name}
-      <span className="font-mono text-[10px] opacity-70">{folder.note_count}</span>
       <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRenameStart();
-        }}
+        type="button"
+        onClick={onSelect}
+        aria-pressed={active}
+        title={`Filter by ${folder.name} (${folder.note_count})`}
+        className="flex min-w-0 items-center gap-1 text-left"
+      >
+        <FolderInput className="size-3" />
+        <span className="truncate">{folder.name}</span>
+        <span className="font-mono text-[10px] opacity-70">{folder.note_count}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onRenameStart}
         title="Rename folder"
         aria-label={`Rename ${folder.name}`}
-        className="hidden cursor-pointer hover:text-zinc-100 group-hover:inline"
+        className="hover-reveal cursor-pointer hover:text-zinc-100"
       >
         <Pencil className="size-3" />
       </button>
       <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onDeleteAsk();
-        }}
+        type="button"
+        onClick={onDeleteAsk}
         title="Delete folder (notes become Unfiled)"
         aria-label={`Delete ${folder.name}`}
-        className="hidden cursor-pointer hover:text-red-300 group-hover:inline"
+        className="hover-reveal cursor-pointer hover:text-red-300"
       >
         <Trash2 className="size-3" />
       </button>
@@ -1140,7 +1165,10 @@ function NoteRow({
         tabIndex={0}
         onClick={onSelect}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onSelect();
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect();
+          }
         }}
         draggable={!renaming}
         onDragStart={onDragStart}
@@ -1179,7 +1207,7 @@ function NoteRow({
                 if (e.key === 'Escape') onRenameCancel();
               }}
               aria-label="Note title"
-              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[13px] text-zinc-100 focus:outline-none"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[13px] text-zinc-100 "
             />
           ) : (
             <p className="flex items-center gap-1.5 truncate text-[13px] font-medium text-zinc-200">
@@ -1220,7 +1248,7 @@ function NoteRow({
             </span>
           ) : (
             <span
-              className="mt-1 flex items-center gap-0.5 sm:opacity-0 sm:transition-opacity sm:duration-150 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+              className="hover-reveal mt-1 flex items-center gap-0.5 transition-opacity duration-150"
               onClick={(e) => e.stopPropagation()}
             >
               <IconButton

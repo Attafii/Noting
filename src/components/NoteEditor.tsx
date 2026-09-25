@@ -58,6 +58,13 @@ import { setSaveState } from '../lib/save-status';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { decryptText, encryptText } from '../lib/crypto';
 import { getCryptoKey, useE2E } from '../lib/e2e';
+import {
+  clearLegacyPending,
+  getPending,
+  getWorkspaceId,
+  putPending,
+  removePending,
+} from '../lib/outbox';
 import { cn } from '../lib/utils';
 import { ConflictDialog } from './ConflictDialog';
 import { EditorToolbar, type ToolbarAction } from './editor/Toolbar';
@@ -74,34 +81,19 @@ const MarkdownView = lazy(() =>
   import('./MarkdownView').then((module) => ({ default: module.MarkdownView })),
 );
 
-/** Offline outbox: edits that failed to save due to network loss. */
-const PENDING_KEY = 'note-pending';
-
-function readPending(): string | null {
-  try {
-    const raw = localStorage.getItem(PENDING_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { content?: unknown };
-    return typeof parsed.content === 'string' ? parsed.content : null;
-  } catch {
-    return null;
+function newMutationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
   }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function stashPending(content: string) {
-  try {
-    localStorage.setItem(PENDING_KEY, JSON.stringify({ content, at: Date.now() }));
-  } catch {
-    /* storage unavailable — nothing to do */
-  }
-}
-
-function clearPending() {
-  try {
-    localStorage.removeItem(PENDING_KEY);
-  } catch {
-    /* ignore */
-  }
+interface SaveInput {
+  content: string;
+  baseVersion: number;
+  mutationId: string;
+  sequence: number;
 }
 
 interface NoteEditorProps {
@@ -139,11 +131,20 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const [serverPreview, setServerPreview] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   /** First-load adoption state; null until server data arrives (replaces an init flag). */
-  const [loadState, setLoadState] = useState<{ anchor: string; restored: boolean } | null>(null);
+  const [loadState, setLoadState] = useState<{
+    anchor: string;
+    version: number;
+    restored: boolean;
+  } | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const e2e = useE2E();
-  /** The `updated_at` this client based its edits on — the conflict-detection anchor. */
   const baseRef = useRef<string | null>(null);
+  const baseVersionRef = useRef(1);
+  const saveSequenceRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const queuedSaveRef = useRef<SaveInput | null>(null);
+  const saveMutateRef = useRef<(input: SaveInput) => void>(() => undefined);
+  const workspaceIdRef = useRef<string | null>(null);
   /** Readiness + latest-text mirrors for event-listener callbacks. Synced in an effect below. */
   const readyRef = useRef(false);
   const textRef = useRef(text);
@@ -160,6 +161,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
 
   const noteEnc = noteQuery.data?.enc ?? false;
+  const shouldEncrypt = noteEnc || e2e;
 
   const revisionsQuery = useQuery({
     queryKey: ['revisions', noteId],
@@ -184,6 +186,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       if (!key) throw new Error('No encryption key available');
       return Promise.all(
         items.map(async (revision) => {
+          if (!revision.enc) return revision;
           try {
             return { ...revision, content: await decryptText(key, revision.content) };
           } catch {
@@ -204,7 +207,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     readyRef.current = loadState !== null;
     textRef.current = text;
     conflictRef.current = conflict;
-    encRef.current = noteEnc || e2e;
+    encRef.current = shouldEncrypt;
   });
 
   // Decrypt-after-load for E2E notes. Plaintext notes resolve immediately;
@@ -223,22 +226,41 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     staleTime: Infinity,
   });
 
-  // Adopt the server version on first arrival. This is a guarded render-time
-  // adjustment (the sanctioned pattern for init-on-load): it runs once because
-  // setLoadState flips the guard, and every write here is idempotent.
-  // Refs and toasts stay out of render — the effect below applies them.
-  if (noteQuery.data && loadState === null && decryptedQuery.data !== undefined) {
-    const serverText = decryptedQuery.data;
-    const pending = readPending();
-    const adopted = pending !== null && pending !== serverText;
-    setLoadState({ anchor: noteQuery.data.updated_at ?? '', restored: adopted });
-    setText(adopted && pending !== null ? pending : serverText);
-  }
+  useEffect(() => {
+    if (!noteQuery.data || decryptedQuery.data === undefined || loadState !== null) return;
+    let cancelled = false;
+    void (async () => {
+      const workspaceId = await getWorkspaceId();
+      const pending = workspaceId ? await getPending(workspaceId, noteId) : null;
+      if (cancelled) return;
+      workspaceIdRef.current = workspaceId;
+      const serverText = decryptedQuery.data;
+      const adopted = pending !== null && pending.content !== serverText;
+      setLoadState({
+        anchor: noteQuery.data.updated_at ?? '',
+        version: noteQuery.data.content_version ?? 1,
+        restored: adopted,
+      });
+      setText(adopted && pending ? pending.content : serverText);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [decryptedQuery.data, loadState, noteId, noteQuery.data]);
+
+  useEffect(() => {
+    if (clearLegacyPending()) {
+      toast.warning(
+        'Removed an old unsynced browser entry that could not be safely matched to a note',
+      );
+    }
+  }, []);
 
   // Side effects of the first load live here, not in render.
   useEffect(() => {
     if (!loadState) return;
     baseRef.current = loadState.anchor || null;
+    baseVersionRef.current = loadState.version;
     setSaveState('saved', loadState.anchor || undefined);
     if (loadState.restored) toast.info('Restored unsynced edits from offline session');
   }, [loadState]);
@@ -257,46 +279,37 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     };
   }, []);
 
-  const abortRef = useRef<AbortController | null>(null);
-
   const save = useMutation({
-    mutationFn: async (input: { content: string }) => {
-      // Cancel any in-flight save so rapid keystrokes can't reorder writes.
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-      try {
-        // E2E: ciphertext goes over the wire when the note is (or becomes) encrypted.
-        let content = input.content;
-        const enc = encRef.current;
-        if (enc) {
-          const key = await getCryptoKey();
-          if (!key) throw new Error('No encryption key available — re-enter your token');
-          content = await encryptText(key, input.content);
-        }
-        return await saveNote({
-          id: noteId,
-          content,
-          signal: controller.signal,
-          baseUpdatedAt: baseRef.current,
-          enc,
-        });
-      } finally {
-        if (abortRef.current === controller) abortRef.current = null;
+    mutationFn: async (input: SaveInput) => {
+      let content = input.content;
+      const enc = encRef.current;
+      if (enc) {
+        const key = await getCryptoKey();
+        if (!key) throw new Error('No encryption key available — re-enter your token');
+        content = await encryptText(key, input.content);
       }
+      return saveNote({
+        id: noteId,
+        content,
+        baseVersion: input.baseVersion,
+        mutationId: input.mutationId,
+        enc,
+      });
     },
     onMutate: () => {
       setSaveState('saving');
     },
     onSuccess: (data, variables) => {
+      if (variables.sequence !== saveSequenceRef.current) return;
       baseRef.current = data.updated_at;
+      baseVersionRef.current = data.content_version ?? 1;
       setSaveState('saved', data.updated_at);
       queryClient.setQueryData(['note', noteId], data);
-      clearPending();
+      if (workspaceIdRef.current) {
+        void removePending(workspaceIdRef.current, noteId);
+      }
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['revisions', noteId] });
-      // Keep the #tag index in sync (server can't derive it for E2E rows).
-      // Org-only PATCH leaves updated_at alone, so the anchor above stays valid.
       const summary = queryClient
         .getQueryData<NoteSummary[]>(['notes'])
         ?.find((note) => note.id === noteId);
@@ -315,31 +328,25 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       }
     },
     onError: (err, variables) => {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (variables.sequence !== saveSequenceRef.current) return;
       if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
         setSaveState('error');
         onUnauthorized();
         return;
       }
       if (err instanceof ApiError && err.code === 'CONFLICT' && err.conflict) {
-        // Pause here — the dialog resolves it, autosave resumes after.
         const serverRow = err.conflict;
-        // No real conflict when the texts already match (anchor-format skew
-        // or a raced autosave): re-anchor and carry on silently instead of
-        // trapping the user in the dialog. Only safe for plaintext — an
-        // encrypted server blob can't be compared without the key.
         if (!(serverRow.enc ?? noteEnc) && serverRow.content === textRef.current) {
           baseRef.current = serverRow.updated_at;
+          baseVersionRef.current = serverRow.content_version ?? 1;
           setSaveState('saved', serverRow.updated_at);
           queryClient.setQueryData(['note', noteId], serverRow);
-          clearPending();
+          if (workspaceIdRef.current) void removePending(workspaceIdRef.current, noteId);
           toast.info('Already in sync with the latest version');
           return;
         }
         setSaveState('idle');
         setConflict(serverRow);
-        // Never show ciphertext in the comparison dialog: decrypt the server
-        // pane for encrypted notes (async; dialog renders once ready).
         if (serverRow.enc ?? noteEnc) {
           setServerPreview(null);
           void (async () => {
@@ -359,9 +366,15 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         }
         return;
       }
-      if (err instanceof ApiError && err.status === 0 && typeof variables?.content === 'string') {
-        // Network failure (likely offline) — queue for reconnect.
-        stashPending(variables.content);
+      if (err instanceof ApiError && err.status === 0) {
+        void putPending({
+          noteId,
+          content: variables.content,
+          baseVersion: variables.baseVersion,
+          mutationId: variables.mutationId,
+        }).then((stored) => {
+          if (!stored) toast.warning('Offline edit could not be stored securely in this browser');
+        });
         setSaveState('error');
         toast.error('Offline — edits will sync when reconnected', { id: 'offline-queue' });
         return;
@@ -369,24 +382,61 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       setSaveState('error');
       toast.error(err instanceof Error ? err.message : 'Failed to save note');
     },
+    onSettled: (_data, _error, variables) => {
+      saveInFlightRef.current = false;
+      const queued = queuedSaveRef.current;
+      queuedSaveRef.current = null;
+      if (queued && variables && queued.sequence > variables.sequence && !conflictRef.current) {
+        queueMicrotask(() => {
+          saveInFlightRef.current = true;
+          saveMutateRef.current(queued);
+        });
+      }
+    },
   });
 
   const { mutate: saveMutate } = save;
+  useEffect(() => {
+    saveMutateRef.current = saveMutate;
+  }, [saveMutate]);
+  const startSave = useCallback(
+    (content: string, version = baseVersionRef.current) => {
+      const input: SaveInput = {
+        content,
+        baseVersion: version,
+        mutationId: newMutationId(),
+        sequence: ++saveSequenceRef.current,
+      };
+      if (saveInFlightRef.current) {
+        queuedSaveRef.current = input;
+        return;
+      }
+      saveInFlightRef.current = true;
+      saveMutate(input);
+    },
+    [saveMutate],
+  );
 
   // Keyboard shortcuts + reconnect flush. Refs keep callbacks fresh.
   useEffect(() => {
     const onSaveNow = () => {
       if (!readyRef.current || conflictRef.current) return;
-      saveMutate({ content: textRef.current });
+      startSave(textRef.current);
     };
     const onTogglePreview = () => setMode((value) => (value === 'preview' ? 'write' : 'preview'));
     const onToggleHistory = () => setHistoryOpen((value) => !value);
     const onReconnect = () => {
-      const pending = readPending();
-      if (pending === null || !readyRef.current || conflictRef.current) return;
-      if (pending !== textRef.current) setText(pending);
-      saveMutate({ content: pending });
-      toast.success('Back online — synced pending edits');
+      if (!readyRef.current || conflictRef.current) return;
+      void (async () => {
+        const workspaceId = workspaceIdRef.current ?? (await getWorkspaceId());
+        if (!workspaceId) return;
+        workspaceIdRef.current = workspaceId;
+        const pending = await getPending(workspaceId, noteId);
+        if (!pending) return;
+        if (pending.content !== textRef.current) setText(pending.content);
+        startSave(pending.content, pending.baseVersion);
+        toast.success('Back online — syncing pending edits');
+      })();
     };
     window.addEventListener(SHORTCUT_EVENTS.saveNow, onSaveNow);
     window.addEventListener(SHORTCUT_EVENTS.togglePreview, onTogglePreview);
@@ -398,10 +448,10 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       window.removeEventListener(SHORTCUT_EVENTS.toggleHistory, onToggleHistory);
       window.removeEventListener('online', onReconnect);
     };
-  }, [saveMutate]);
+  }, [noteId, startSave]);
 
   const format = useMutation({
-    mutationFn: formatNoteText,
+    mutationFn: (value: string) => formatNoteText(value, false),
     onSuccess: (result) => {
       setText(result.formatted);
       if (result.fallback) {
@@ -425,7 +475,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   useEffect(() => {
     if (!readyRef.current || conflict) return;
     const timer = setTimeout(() => {
-      save.mutate({ content: text });
+      startSave(text);
     }, getAutosaveMs());
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,11 +483,11 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
 
   function handleKeepMine() {
     if (!conflict) return;
-    // Re-anchor onto the server version, then overwrite deliberately.
     baseRef.current = conflict.updated_at;
+    baseVersionRef.current = conflict.content_version ?? baseVersionRef.current;
     setConflict(null);
     setServerPreview(null);
-    save.mutate({ content: text });
+    startSave(text);
   }
 
   function handleLoadTheirs() {
@@ -466,6 +516,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   function applyTheirs(content: string, serverRow: NotePayload) {
     setText(content);
     baseRef.current = serverRow.updated_at;
+    baseVersionRef.current = serverRow.content_version ?? baseVersionRef.current;
     setConflict(null);
     setServerPreview(null);
     setSaveState('saved', serverRow.updated_at);
@@ -488,7 +539,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   }
 
   function handleFormat() {
-    if (noteEnc) {
+    if (shouldEncrypt) {
       toast.warning('Encrypted notes stay private — AI formatting skipped.');
       return;
     }
@@ -692,7 +743,20 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const duplicate = useMutation({
     mutationFn: async () => {
       const created = await createNote(`${noteTitle} (copy)`);
-      return saveNote({ id: created.id, content: text, baseUpdatedAt: created.updated_at });
+      let content = text;
+      const enc = encRef.current;
+      if (enc) {
+        const key = await getCryptoKey();
+        if (!key) throw new Error('No encryption key available — re-enter your token');
+        content = await encryptText(key, text);
+      }
+      return saveNote({
+        id: created.id,
+        content,
+        baseVersion: created.content_version ?? 1,
+        mutationId: newMutationId(),
+        enc,
+      });
     },
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -705,6 +769,40 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         return;
       }
       toast.error(err instanceof Error ? err.message : 'Duplicate failed');
+    },
+  });
+
+  const keepBoth = useMutation({
+    mutationFn: async () => {
+      const created = await createNote(`${noteTitle} (conflict copy)`);
+      let content = text;
+      const enc = encRef.current;
+      if (enc) {
+        const key = await getCryptoKey();
+        if (!key) throw new Error('No encryption key available — re-enter your token');
+        content = await encryptText(key, text);
+      }
+      return saveNote({
+        id: created.id,
+        content,
+        baseVersion: created.content_version ?? 1,
+        mutationId: newMutationId(),
+        enc,
+      });
+    },
+    onSuccess: (note) => {
+      setConflict(null);
+      setServerPreview(null);
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      onSelectNote?.(note.id);
+      toast.success('Both versions kept — opened the conflict copy');
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') {
+        onUnauthorized();
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : 'Could not keep both versions');
     },
   });
 
@@ -772,15 +870,16 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         server={conflict}
         serverPreview={serverPreview}
         localPreview={text}
-        busy={save.isPending}
+        busy={save.isPending || keepBoth.isPending}
         onKeepMine={handleKeepMine}
+        onKeepBoth={() => keepBoth.mutate()}
         onLoadTheirs={handleLoadTheirs}
       />
       <Card className="flex h-full flex-col overflow-hidden">
         <CardHeader>
           <CardTitle className="truncate">{noteTitle}</CardTitle>
           <div className="flex items-center gap-2">
-            {noteEnc && (
+            {shouldEncrypt && (
               <Badge
                 variant="accent"
                 title="End-to-end encrypted — only ciphertext leaves this browser"
@@ -916,7 +1015,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                     placeholder="// scratchpad — autosaves as you type. Type / for commands."
                     spellCheck={getSpellcheck()}
                     aria-label="Note editor"
-                    className="max-h-[52vh] min-h-[320px] flex-1 resize-none bg-transparent px-5 py-4 font-mono text-sm leading-relaxed text-zinc-200 placeholder:text-zinc-600 focus:outline-none lg:max-h-none lg:min-h-[440px]"
+                    aria-busy={save.isPending}
+                    className="max-h-[52vh] min-h-[320px] flex-1 resize-none bg-transparent px-5 py-4 font-mono text-sm leading-relaxed text-zinc-200 placeholder:text-zinc-600  lg:max-h-none lg:min-h-[440px]"
                   />
                 </div>
                 <div
@@ -985,8 +1085,9 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                   placeholder="// scratchpad — autosaves as you type. Type / for commands."
                   spellCheck={getSpellcheck()}
                   aria-label="Note editor"
+                  aria-busy={save.isPending}
                   className={cn(
-                    'max-h-[52vh] min-h-[320px] flex-1 resize-none bg-transparent px-5 py-4 font-mono leading-relaxed text-zinc-200 placeholder:text-zinc-600 focus:outline-none lg:max-h-none lg:min-h-[440px]',
+                    'max-h-[52vh] min-h-[320px] flex-1 resize-none bg-transparent px-5 py-4 font-mono leading-relaxed text-zinc-200 placeholder:text-zinc-600  lg:max-h-none lg:min-h-[440px]',
                     zen ? 'text-base leading-loose' : 'text-sm',
                   )}
                 />
@@ -1147,7 +1248,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                     }
                     placeholder="e.g. 500"
                     aria-label="Word goal"
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:outline-none"
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 "
                   />
                   {goal > 0 && (
                     <Button size="sm" variant="ghost" onClick={() => persistGoal(0)}>
@@ -1252,9 +1353,9 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 variant="accent"
                 size="sm"
                 onClick={handleFormat}
-                disabled={format.isPending || text.length === 0 || noteEnc}
+                disabled={format.isPending || text.length === 0 || shouldEncrypt}
                 title={
-                  noteEnc
+                  shouldEncrypt
                     ? 'Encrypted notes stay private — AI formatting skipped'
                     : 'Clean up and structure with AI'
                 }

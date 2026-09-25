@@ -38,9 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const rows = await withQueryTimeout(
-      sql.query('SELECT id, question FROM access_tokens WHERE token_hash = $1', [
-        hashToken(token),
-      ]),
+      sql.query('SELECT id, question FROM access_tokens WHERE token_hash = $1', [hashToken(token)]),
       8000,
     );
     if (rows.length === 0) {

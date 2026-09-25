@@ -15,10 +15,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "migrate": "node scripts/migrate.cjs"
+    "migrate": "node scripts/migrate.cjs",
+    "backfill:owner": "node scripts/backfill-owner.cjs",
+    "create:invite": "node scripts/create-invite.cjs",
+    "purge:retention": "node scripts/purge-retention.cjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
+    "busboy": "^1.6.0",
     "@tanstack/react-query": "^5.75.5",
     "@tanstack/react-router": "^1.114.33",
     "class-variance-authority": "^0.7.1",
@@ -47,7 +51,6 @@
     "@vercel/node": "^5.8.22",
     "@vitejs/plugin-react": "^4.4.2",
     "autoprefixer": "^10.4.21",
-    "busboy": "^1.6.0",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",

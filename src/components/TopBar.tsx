@@ -15,11 +15,12 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { listDocuments } from '../lib/api';
+import { endSession, listDocuments } from '../lib/api';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
 import { applyTheme, getTheme, useTheme } from '../lib/theme';
 import { useSaveStatus, type SaveState } from '../lib/save-status';
+import { hasPendingMutations } from '../lib/outbox';
 import { cn } from '../lib/utils';
 import { Badge } from './ui/badge';
 
@@ -45,6 +46,16 @@ export function TopBar({
   const [online, setOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine,
   );
+  const [pendingEdits, setPendingEdits] = useState(false);
+
+  useEffect(() => {
+    const refreshPending = () => {
+      void hasPendingMutations().then(setPendingEdits);
+    };
+    refreshPending();
+    const timer = window.setInterval(refreshPending, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const goOnline = () => setOnline(true);
@@ -121,7 +132,16 @@ export function TopBar({
               </Badge>
             </motion.span>
           </AnimatePresence>
+          <span className="sr-only" aria-live="polite">
+            {SAVE_LABEL[save.state]}
+          </span>
 
+          {pendingEdits && (
+            <Badge variant="warning" title="Encrypted edits are waiting to sync">
+              <CloudOff className="size-3" />
+              Pending
+            </Badge>
+          )}
           {typeof docs.data?.length === 'number' && (
             <Badge
               variant="neutral"
@@ -168,6 +188,7 @@ export function TopBar({
               {onLock && (
                 <button
                   onClick={() => {
+                    void endSession();
                     onLock();
                     toast.success('Workspace locked — token and answer cleared');
                   }}

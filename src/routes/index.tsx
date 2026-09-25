@@ -13,7 +13,8 @@ import { TokenGate } from '../components/TokenGate';
 import { TopBar } from '../components/TopBar';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { createNote, listNotes } from '../lib/api';
+import { createNote, endSession, listNotes } from '../lib/api';
+import { clearPendingMemory } from '../lib/outbox';
 import { clearToken, getAnswer, getToken } from '../lib/token';
 import { SHORTCUT_EVENTS, useGlobalShortcuts } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
@@ -24,6 +25,20 @@ export const Route = createFileRoute('/')({
 });
 
 const SELECTED_KEY = 'selected-note-id';
+const NOTE_QUERY_KEY = 'note';
+
+function initialSelectedId(): number | null {
+  try {
+    const raw = new URLSearchParams(window.location.search).get(NOTE_QUERY_KEY);
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+    const stored = localStorage.getItem(SELECTED_KEY);
+    const storedId = stored ? Number.parseInt(stored, 10) : Number.NaN;
+    return Number.isSafeInteger(storedId) && storedId > 0 ? storedId : null;
+  } catch {
+    return null;
+  }
+}
 
 function IndexComponent() {
   useEffect(() => {
@@ -39,11 +54,7 @@ function IndexComponent() {
     return t && getAnswer() ? t : null;
   });
   const [epoch, setEpoch] = useState(0);
-  const [selectedId, setSelectedId] = useState<number | null>(() => {
-    const stored = localStorage.getItem(SELECTED_KEY);
-    const parsed = stored ? parseInt(stored, 10) : NaN;
-    return Number.isNaN(parsed) ? null : parsed;
-  });
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
   useGlobalShortcuts();
@@ -62,6 +73,8 @@ function IndexComponent() {
   }, []);
 
   const handleUnauthorized = useCallback(() => {
+    void endSession();
+    clearPendingMemory();
     clearToken();
     try {
       localStorage.removeItem(SELECTED_KEY);
@@ -75,6 +88,7 @@ function IndexComponent() {
 
   const handleTokenSaved = useCallback(
     (value: string) => {
+      clearPendingMemory();
       setSelectedId(null);
       queryClient.clear();
       setSession(value);
@@ -87,6 +101,10 @@ function IndexComponent() {
     setSelectedId(id);
     try {
       localStorage.setItem(SELECTED_KEY, String(id));
+      const params = new URLSearchParams(window.location.search);
+      params.set(NOTE_QUERY_KEY, String(id));
+      params.delete('token');
+      window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
     } catch {
       /* ignore */
     }
@@ -141,6 +159,7 @@ function AuthedWorkspace({
 }) {
   const queryClient = useQueryClient();
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
+  const [sideTab, setSideTab] = useState<'files' | 'ask'>('files');
   const [sideW, setSideW] = useState(() => {
     try {
       const stored = parseInt(localStorage.getItem('layout-side-w') ?? '', 10);
@@ -188,6 +207,7 @@ function AuthedWorkspace({
   }, [sideW]);
 
   function goSideTab(tab: 'files' | 'ask') {
+    setSideTab(tab);
     window.dispatchEvent(
       new CustomEvent<'files' | 'ask'>(SHORTCUT_EVENTS.sideTab, { detail: tab }),
     );
@@ -268,7 +288,7 @@ function AuthedWorkspace({
           className="flex min-h-0 scroll-mt-20 flex-col gap-4"
           id="side-panel"
         >
-          <SidePanel onUnauthorized={onUnauthorized} />
+          <SidePanel onUnauthorized={onUnauthorized} onTabChange={setSideTab} />
         </motion.section>
       </main>
 
@@ -291,11 +311,13 @@ function AuthedWorkspace({
           <BottomTab
             icon={<Files className="size-4" />}
             label="Files"
+            active={sideTab === 'files'}
             onClick={() => goSideTab('files')}
           />
           <BottomTab
             icon={<Sparkles className="size-4" />}
             label="Ask"
+            active={sideTab === 'ask'}
             onClick={() => goSideTab('ask')}
           />
         </div>
@@ -344,16 +366,22 @@ function AuthedWorkspace({
 function BottomTab({
   icon,
   label,
+  active = false,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
+  active?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex cursor-pointer flex-col items-center gap-1 py-2.5 text-[11px] text-zinc-400 transition-colors active:scale-95 hover:text-zinc-100"
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex cursor-pointer flex-col items-center gap-1 py-2.5 text-[11px] transition-colors active:scale-95',
+        active ? 'text-accent-300' : 'text-zinc-400 hover:text-zinc-100',
+      )}
     >
       {icon}
       {label}

@@ -18,6 +18,7 @@ interface ConflictDialogProps {
   localPreview: string;
   busy: boolean;
   onKeepMine: () => void;
+  onKeepBoth: () => void;
   onLoadTheirs: () => void;
 }
 
@@ -27,6 +28,7 @@ export function ConflictDialog({
   localPreview,
   busy,
   onKeepMine,
+  onKeepBoth,
   onLoadTheirs,
 }: ConflictDialogProps) {
   // Lock background scroll while the conflict is unresolved.
@@ -104,6 +106,9 @@ export function ConflictDialog({
                 <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <Button variant="secondary" onClick={onLoadTheirs} disabled={busy}>
                     Load theirs
+                  </Button>
+                  <Button variant="secondary" onClick={onKeepBoth} disabled={busy}>
+                    Keep both
                   </Button>
                   <Button variant="accent" onClick={onKeepMine} disabled={busy}>
                     {busy ? 'Saving…' : 'Keep mine'}

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { resolveAuth } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
+import { checkStorageQuota, QuotaError } from './_quota.js';
 import { getSql } from '../src/lib/db.js';
 
 // NOTE: `busboy` and `./_index` are deliberately NOT statically imported.
@@ -17,6 +18,8 @@ const MAX_BYTES = 4.5 * 1024 * 1024;
  * reason — busboy consumes `req` directly below.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
+
   // Multipart gate: busboy needs the raw stream, but auth must still run
   // first. Blind admin → 404 (sees nothing); unauthed → 401.
   const auth = await resolveAuth(req);
@@ -66,6 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let fileName = '';
   let fileType = '';
   let encrypted = false;
+  let replaceId: number | null = null;
   let hasFile = false;
   let responded = false;
 
@@ -77,8 +81,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   bb.on('field', (fieldname, value) => {
-    // Client-side E2E encryption marker: the stored bytes are ciphertext.
     if (fieldname === 'enc' && value === '1') encrypted = true;
+    if (fieldname === 'replace_id' && /^\d+$/.test(value)) replaceId = Number(value);
   });
 
   bb.on('file', (fieldname, file, info) => {
@@ -118,30 +122,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
     try {
-      const sql = getSql();
-      await sql
-        .query('ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id TEXT')
-        .catch(() => undefined);
       const bytes = fileBuffer;
-      const rows = await sql.query(
-        'INSERT INTO documents (file_name, file_type, file_data, enc, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, file_name, file_type, enc, octet_length(file_data) AS file_size, uploaded_at',
-        [fileName, fileType, bytes, encrypted, userId],
+      await checkStorageQuota(userId, bytes.length);
+      const sql = getSql();
+      const rows = replaceId
+        ? await sql.query(
+            `UPDATE documents
+             SET file_name = $1, file_type = $2, file_data = $3, enc = $4,
+                 content_version = content_version + 1, index_status = 'queued',
+                 index_error = NULL, indexed_at = NULL, uploaded_at = NOW()
+             WHERE id = $5 AND user_id = $6
+             RETURNING id, file_name, file_type, enc, content_version, index_status,
+                       index_error, indexed_at, octet_length(file_data) AS file_size, uploaded_at`,
+            [fileName, fileType, bytes, encrypted, replaceId, userId],
+          )
+        : await sql.query(
+            `INSERT INTO documents (file_name, file_type, file_data, enc, user_id, index_status)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id, file_name, file_type, enc, content_version, index_status,
+                       index_error, indexed_at, octet_length(file_data) AS file_size, uploaded_at`,
+            [fileName, fileType, bytes, encrypted, userId, encrypted ? 'skipped' : 'queued'],
+          );
+      if (rows.length === 0) {
+        fail(404, replaceId ? 'Document not found' : 'Upload failed');
+        return;
+      }
+      const doc = rows[0] as { id: number };
+      await sql.query(
+        `INSERT INTO index_jobs (user_id, document_id, status)
+         VALUES ($1, $2, $3)`,
+        [userId, doc.id, encrypted ? 'skipped' : 'queued'],
       );
       responded = true;
-      const doc = rows[0];
       res.status(200).json(doc);
-      // RAG indexing is best-effort and runs after the response so uploads
-      // stay fast; it no-ops for encrypted or non-text files, and verifies
-      // the document owner before embedding (per-user isolation).
-      // Lazily imported so indexer failures can't break the upload bundle.
-      // NOTE: `.js` extension is required — extensionless relative dynamic
-      // imports throw ERR_MODULE_NOT_FOUND on Vercel Node ESM
-      // (`"type": "module"`), silently disabling indexing in prod.
-      const docId = doc.id as number;
       void import('./_index.js')
-        .then((m) => m.indexDocument(docId, fileName, fileType, bytes, encrypted, userId))
+        .then((m) => m.indexDocument(doc.id, fileName, fileType, bytes, encrypted, userId))
         .catch((e) => console.error('indexing error', e));
     } catch (e) {
+      if (e instanceof QuotaError) {
+        fail(e.status, e.message);
+        return;
+      }
       console.error('upload error', e);
       fail(500, 'Upload failed');
     }

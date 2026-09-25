@@ -1,12 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireUser } from './_auth.js';
 import { enforceRateLimit } from './_ratelimit.js';
+import { checkNoteQuota, QuotaError } from './_quota.js';
 import { getSql } from '../src/lib/db.js';
 import type { NeonQueryFunction } from '@neondatabase/serverless';
 
 const LIST_COLUMNS =
-  'notes.id, notes.title, notes.pinned, notes.archived, notes.enc, notes.folder_id, notes.favorite, ' +
+  'notes.id, notes.title, notes.pinned, notes.archived, notes.enc, notes.content_version, notes.folder_id, notes.favorite, ' +
   'notes.sort_order, notes.updated_at, notes.created_at, LEFT(notes.content, 160) AS preview, ' +
+  'CASE WHEN notes.enc = FALSE THEN LEFT(notes.content, 4000) ELSE NULL END AS search_text, ' +
   "(SELECT COALESCE(array_agg(t.tag), '{}') FROM note_tags t WHERE t.note_id = notes.id) AS tags";
 
 type SortKey = 'updated' | 'created' | 'alpha' | 'manual';
@@ -54,32 +56,15 @@ async function setTags(
   }
 }
 
-async function ensureOrgColumns(sql: NeonQueryFunction<false, false>): Promise<void> {
-  // Best-effort: fresh checkouts that haven't run migrations yet keep working.
-  await sql.query('ALTER TABLE notes ADD COLUMN IF NOT EXISTS folder_id INTEGER');
-  await sql.query(
-    'ALTER TABLE notes ADD COLUMN IF NOT EXISTS favorite BOOLEAN NOT NULL DEFAULT FALSE',
-  );
-  await sql.query(
-    'ALTER TABLE notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL',
-  );
-  await sql.query(
-    'ALTER TABLE notes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0',
-  );
-  await sql.query('ALTER TABLE notes ADD COLUMN IF NOT EXISTS user_id TEXT');
-  await sql.query(
-    'CREATE TABLE IF NOT EXISTS note_tags (note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, tag TEXT NOT NULL, PRIMARY KEY (note_id, tag))',
-  );
-}
-
 async function folderOwnedBy(
   sql: NeonQueryFunction<false, false>,
   folderId: number,
   userId: string,
 ): Promise<boolean> {
-  const rows = await sql
-    .query('SELECT id FROM folders WHERE id = $1 AND user_id = $2', [folderId, userId])
-    .catch(() => []);
+  const rows = await sql.query('SELECT id FROM folders WHERE id = $1 AND user_id = $2', [
+    folderId,
+    userId,
+  ]);
   return rows.length > 0;
 }
 
@@ -88,19 +73,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!userId) return;
   if (!(await enforceRateLimit(req, res))) return;
 
-  const sql = getSql();
-
   try {
+    const sql = getSql();
     if (req.method === 'GET') {
-      await ensureOrgColumns(sql).catch(() => undefined);
       const trash = req.query?.trash === '1';
       const sort = parseSort(typeof req.query?.sort === 'string' ? req.query.sort : undefined);
-      const where = trash
+      const search = typeof req.query?.q === 'string' ? req.query.q.trim().slice(0, 200) : '';
+      const baseWhere = trash
         ? 'WHERE notes.user_id = $1 AND notes.deleted_at IS NOT NULL'
         : 'WHERE notes.user_id = $1 AND notes.deleted_at IS NULL';
+      const where = search
+        ? `${baseWhere} AND (notes.title ILIKE $2 OR (notes.enc = FALSE AND notes.content ILIKE $2) OR EXISTS (SELECT 1 FROM note_tags search_tags WHERE search_tags.note_id = notes.id AND search_tags.tag ILIKE $2))`
+        : baseWhere;
+      const params = search ? [userId, `%${search}%`] : [userId];
       const rows = await sql.query(
         `SELECT ${LIST_COLUMNS} FROM notes ${where} ${orderBy(sort)}`,
-        [userId],
+        params,
       );
       res.status(200).json(rows);
       return;
@@ -115,7 +103,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
       // Restore from trash (mirrors the documents endpoint convention).
       if (action === 'restore' && typeof id === 'number' && Number.isInteger(id)) {
-        await ensureOrgColumns(sql).catch(() => undefined);
         const rows = await sql.query(
           'UPDATE notes SET deleted_at = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING id',
           [id, userId],
@@ -135,9 +122,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(404).json({ error: 'Note not found' });
         return;
       }
+      try {
+        await checkNoteQuota(userId);
+      } catch (error) {
+        if (error instanceof QuotaError) {
+          res.status(error.status).json({ error: error.message });
+          return;
+        }
+        throw error;
+      }
       const rows = await sql.query(
         `INSERT INTO notes (title, content, folder_id, user_id) VALUES ($1, '', $2, $3)
-         RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
+         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, updated_at, created_at`,
         [clean, folder, userId],
       );
       res.status(201).json({ ...rows[0], tags: [] });
@@ -160,10 +156,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(400).json({ error: 'id must be an integer' });
         return;
       }
-      await ensureOrgColumns(sql).catch(() => undefined);
       const folderSet =
         folder_id === null || (typeof folder_id === 'number' && Number.isInteger(folder_id));
-      if (folderSet && typeof folder_id === 'number' && !(await folderOwnedBy(sql, folder_id, userId))) {
+      if (
+        folderSet &&
+        typeof folder_id === 'number' &&
+        !(await folderOwnedBy(sql, folder_id, userId))
+      ) {
         res.status(404).json({ error: 'Note not found' });
         return;
       }
@@ -181,7 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            sort_order = COALESCE($9, sort_order),
            updated_at = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL OR $5 IS NOT NULL THEN NOW() ELSE updated_at END
          WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-         RETURNING id, title, content, pinned, archived, enc, folder_id, favorite, updated_at, created_at`,
+         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, updated_at, created_at`,
         [
           id,
           userId,
@@ -201,11 +200,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
       if (tags !== undefined) {
-        await setTags(sql, id, tags).catch(() => undefined);
+        await setTags(sql, id, tags);
       }
-      const tagRows = await sql
-        .query('SELECT tag FROM note_tags WHERE note_id = $1', [id])
-        .catch(() => []);
+      const tagRows = await sql.query('SELECT tag FROM note_tags WHERE note_id = $1', [id]);
       res.status(200).json({ ...rows[0], tags: tagRows.map((r) => r.tag) });
       return;
     }
@@ -216,7 +213,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(400).json({ error: 'Missing id query parameter' });
         return;
       }
-      await ensureOrgColumns(sql).catch(() => undefined);
       const permanent = req.query?.permanent === '1';
       if (permanent) {
         const count = await sql.query(
@@ -234,10 +230,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
         // Revisions, tags and future dependents cascade via FK.
-        const rows = await sql.query('DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id', [
-          id,
-          userId,
-        ]);
+        const rows = await sql.query(
+          'DELETE FROM notes WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL RETURNING id',
+          [id, userId],
+        );
         if (rows.length === 0) {
           res.status(404).json({ error: 'Note not found' });
           return;
@@ -272,7 +268,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function parseId(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  const parsed = parseInt(value, 10);
-  return Number.isNaN(parsed) ? null : parsed;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }

@@ -23,10 +23,14 @@ const DEFAULT_LIMIT = 120;
 /** Per-user bucket key — sha256 of the presented credential, no IP. Exported for tests. */
 export function clientKey(req: VercelRequest): string {
   const token = req.headers['x-bridge-token'];
-  const who =
+  const client = req.headers['x-noting-client'];
+  const raw =
     typeof token === 'string' && token.length > 0
-      ? createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 16)
-      : 'anon';
+      ? token
+      : typeof client === 'string'
+        ? client
+        : '';
+  const who = raw ? createHash('sha256').update(raw, 'utf8').digest('hex').slice(0, 16) : 'anon';
   return `u:${who}`;
 }
 
@@ -101,8 +105,8 @@ export const sqlStore: RateLimitStore = {
       );
       return { allowed: true, retryAfterSec: 0 };
     } catch (e) {
-      console.error('rate limit store error — failing open', e);
-      return { allowed: true, retryAfterSec: 0 };
+      console.error('rate limit store error', e);
+      throw e;
     }
   },
 };
@@ -130,8 +134,9 @@ export async function enforceRateLimit(
   try {
     decision = await store.check(key, limit, now);
   } catch (e) {
-    console.error('rate limit check failed — failing open', e);
-    return true;
+    console.error('rate limit check failed', e);
+    res.status(503).json({ error: 'Rate limit service unavailable' });
+    return false;
   }
   if (!decision.allowed) {
     res.setHeader('Retry-After', String(decision.retryAfterSec));

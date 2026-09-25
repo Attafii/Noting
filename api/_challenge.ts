@@ -51,12 +51,14 @@ export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const MIN_HUMAN_MS = 800;
 
 function challengeSecret(): string {
-  return process.env.GLOBAL_SECRET_TOKEN ?? '';
+  return process.env.CHALLENGE_SIGNING_SECRET ?? process.env.GLOBAL_SECRET_TOKEN ?? '';
 }
 
 /** HMAC over (nonce, target tile index, expiry). The answer index is never stored. */
 export function signChallenge(nonce: string, targetIndex: number, expiresAt: number): string {
-  return createHmac('sha256', challengeSecret())
+  const secret = challengeSecret();
+  if (!secret) return '';
+  return createHmac('sha256', secret)
     .update(`${nonce}|${targetIndex}|${expiresAt}`, 'utf8')
     .digest('hex');
 }

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Loader2, Upload } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, Lock, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { getUsage, triggerBlobDownload } from '../lib/api';
+import { endSession, getUsage, triggerBlobDownload } from '../lib/api';
 import { formatBytes } from '../lib/format';
 import { applyTheme, getTheme, useTheme, type AccentName, type DensityName } from '../lib/theme';
 import {
@@ -26,6 +26,7 @@ import {
   type ShortcutId,
 } from '../lib/shortcuts';
 import { getKeyFingerprint, setE2EEnabled, useE2E } from '../lib/e2e';
+import { encryptExistingFiles, encryptExistingNotes } from '../lib/e2e-migrate';
 import { clearToken, getToken } from '../lib/token';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/button';
@@ -56,6 +57,8 @@ function SettingsPage() {
   const [bindingsVersion, setBindingsVersion] = useState(0);
   const [recording, setRecording] = useState<ShortcutId | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [migrationBusy, setMigrationBusy] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   const usageQuery = useQuery({ queryKey: ['usage'], queryFn: getUsage, retry: false });
@@ -119,6 +122,32 @@ function SettingsPage() {
       toast.error(err instanceof Error ? err.message : 'Import failed');
     } finally {
       setBackupBusy(false);
+    }
+  }
+
+  async function handleEncryptExisting() {
+    setMigrationBusy(true);
+    setMigrationProgress('Encrypting notes…');
+    try {
+      const notes = await encryptExistingNotes((done, total) =>
+        setMigrationProgress(`Encrypting notes ${done}/${total}`),
+      );
+      setMigrationProgress('Encrypting files…');
+      const files = await encryptExistingFiles((done, total) =>
+        setMigrationProgress(`Encrypting files ${done}/${total}`),
+      );
+      setMigrationProgress(null);
+      await queryClient.invalidateQueries({ queryKey: ['notes'] });
+      await queryClient.invalidateQueries({ queryKey: ['documents'] });
+      toast.success(`Encrypted ${notes.encrypted} notes and ${files.encrypted} files`);
+      if (notes.failed || files.failed) {
+        toast.warning(`${notes.failed + files.failed} items could not be migrated`);
+      }
+    } catch (error) {
+      setMigrationProgress(null);
+      toast.error(error instanceof Error ? error.message : 'Encryption migration failed');
+    } finally {
+      setMigrationBusy(false);
     }
   }
 
@@ -315,7 +344,8 @@ function SettingsPage() {
               </div>
             )}
             <p className="text-[11px] text-zinc-600">
-              Trash auto-removes items after 30 days. Usage powers future plan limits.
+              Trash auto-removes items after 30 days. Storage and AI limits are enforced per
+              workspace.
             </p>
           </CardContent>
         </Card>
@@ -328,6 +358,9 @@ function SettingsPage() {
                 <p className="text-[13px] font-medium text-zinc-100">End-to-end encryption</p>
                 <p className="font-mono text-[11px] text-zinc-500">
                   key fingerprint: {fingerprintQuery.data ?? '…'}
+                </p>
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Titles, tags, folders, filenames, and MIME types remain visible to the server.
                 </p>
               </div>
               <Toggle
@@ -343,6 +376,32 @@ function SettingsPage() {
                 }}
               />
             </div>
+            <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[13px] font-medium text-zinc-200">Encrypt existing content</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Encrypts active and trashed notes and replaces files in place.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={migrationBusy || !e2e}
+                  onClick={() => void handleEncryptExisting()}
+                >
+                  {migrationBusy ? <Loader2 className="animate-spin" /> : <Lock />}
+                  {migrationBusy ? 'Migrating…' : 'Migrate'}
+                </Button>
+              </div>
+              {migrationProgress && (
+                <p className="mt-2 font-mono text-[11px] text-accent-300">{migrationProgress}</p>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              Backups are portable ZIP files and may contain decrypted content. Store them like a
+              password.
+            </p>
             <div className="flex items-center gap-2">
               <Button size="sm" disabled={backupBusy} onClick={() => void handleExport()}>
                 {backupBusy ? <Loader2 className="animate-spin" /> : <Download />}
@@ -363,6 +422,7 @@ function SettingsPage() {
             </div>
             <button
               onClick={() => {
+                void endSession();
                 clearToken();
                 window.location.href = '/';
               }}

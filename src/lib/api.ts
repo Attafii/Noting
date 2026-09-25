@@ -1,9 +1,8 @@
-import { bridgeHeaders, getAnswer, getToken } from './token';
+import { bridgeHeaders, getAnswer, getSessionId, getToken, isSessionActive } from './token';
 
 export class ApiError extends Error {
   status: number;
-  code: 'UNAUTHORIZED' | 'RATE_LIMITED' | 'CONFLICT' | 'REQUEST_FAILED';
-  /** Present on 409: the server's current version of the resource. */
+  code: 'UNAUTHORIZED' | 'RATE_LIMITED' | 'CONFLICT' | 'QUOTA' | 'SESSION' | 'REQUEST_FAILED';
   conflict?: NotePayload;
 
   constructor(status: number, message: string) {
@@ -17,7 +16,11 @@ export class ApiError extends Error {
           ? 'RATE_LIMITED'
           : status === 409
             ? 'CONFLICT'
-            : 'REQUEST_FAILED';
+            : status === 413 || status === 507
+              ? 'QUOTA'
+              : status === 419
+                ? 'SESSION'
+                : 'REQUEST_FAILED';
   }
 }
 
@@ -27,8 +30,8 @@ export interface NotePayload {
   content: string;
   pinned: boolean;
   archived: boolean;
-  /** True when the stored content is client-side ciphertext (E2E). */
   enc: boolean;
+  content_version: number;
   folder_id: number | null;
   favorite: boolean;
   updated_at: string;
@@ -42,12 +45,14 @@ export interface NoteSummary {
   pinned: boolean;
   archived: boolean;
   enc: boolean;
+  content_version: number;
   folder_id: number | null;
   favorite: boolean;
   sort_order?: number;
   updated_at: string;
   created_at: string;
   preview: string;
+  search_text?: string | null;
   tags: string[];
 }
 
@@ -71,6 +76,8 @@ export type NoteSort = 'updated' | 'created' | 'alpha' | 'manual';
 export interface NoteRevision {
   id: number;
   content: string;
+  enc?: boolean;
+  source_version?: number;
   created_at: string;
 }
 
@@ -81,6 +88,10 @@ export interface DocumentMeta {
   /** Bytes. Server derives it via octet_length — no schema migration needed. */
   file_size: number;
   enc: boolean;
+  content_version: number;
+  index_status?: 'queued' | 'processing' | 'ready' | 'failed' | 'skipped';
+  index_error?: string | null;
+  indexed_at?: string | null;
   uploaded_at: string;
   deleted_at?: string | null;
 }
@@ -138,7 +149,14 @@ async function readJson(res: Response): Promise<unknown> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { ...init, headers: bridgeHeaders(init?.headers) });
+    const headers = new Headers(init?.headers);
+    headers.set('x-noting-client', getSessionId());
+    res = await fetch(path, {
+      ...init,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: bridgeHeaders(headers),
+    });
   } catch {
     throw new ApiError(0, 'Network error — check your connection');
   }
@@ -157,32 +175,65 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await readJson(res)) as T;
 }
 
-export function getNote(id = 1): Promise<NotePayload> {
+export function getNote(id: number): Promise<NotePayload> {
   return request<NotePayload>(`/api/note?id=${id}`);
 }
 
-export function listRevisions(noteId = 1): Promise<NoteRevision[]> {
+export function listRevisions(noteId: number): Promise<NoteRevision[]> {
   return request<NoteRevision[]>(`/api/revisions?note_id=${noteId}`);
+}
+
+export function createRevision(input: {
+  noteId: number;
+  content: string;
+  enc?: boolean;
+}): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/revisions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note_id: input.noteId, content: input.content, enc: input.enc }),
+  });
+}
+
+export function updateRevision(input: {
+  noteId: number;
+  revisionId: number;
+  content: string;
+  enc?: boolean;
+}): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/revisions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      note_id: input.noteId,
+      revision_id: input.revisionId,
+      content: input.content,
+      enc: input.enc,
+    }),
+  });
 }
 
 export interface SaveNoteInput {
   id?: number;
   content: string;
   signal?: AbortSignal;
+  baseVersion?: number;
   baseUpdatedAt?: string | null;
-  /** Marks stored content as client-side ciphertext. */
+  mutationId?: string;
   enc?: boolean;
 }
 
 export function saveNote(input: SaveNoteInput): Promise<NotePayload> {
-  const { id, content, signal, baseUpdatedAt, enc } = input;
+  const { id, content, signal, baseVersion, baseUpdatedAt, mutationId, enc } = input;
   return request<NotePayload>('/api/note', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id,
       content,
+      base_version: baseVersion,
       base_updated_at: baseUpdatedAt ?? undefined,
+      mutation_id: mutationId,
       enc: typeof enc === 'boolean' ? enc : undefined,
     }),
     signal,
@@ -193,8 +244,10 @@ export function listNotes(): Promise<NoteSummary[]> {
   return listNotesSorted('updated');
 }
 
-export function listNotesSorted(sort: NoteSort = 'updated'): Promise<NoteSummary[]> {
-  return request<NoteSummary[]>(`/api/notes?sort=${sort}`).then((rows) =>
+export function listNotesSorted(sort: NoteSort = 'updated', search = ''): Promise<NoteSummary[]> {
+  const params = new URLSearchParams({ sort });
+  if (search.trim()) params.set('q', search.trim().slice(0, 200));
+  return request<NoteSummary[]>(`/api/notes?${params.toString()}`).then((rows) =>
     rows.map((row) => ({ ...row, tags: Array.isArray(row.tags) ? row.tags : [] })),
   );
 }
@@ -286,11 +339,11 @@ export function askQuestion(question: string): Promise<AskResult> {
   });
 }
 
-export function formatNoteText(text: string): Promise<FormatResult> {
+export function formatNoteText(text: string, encrypted = false): Promise<FormatResult> {
   return request<FormatResult>('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, encrypted }),
   });
 }
 
@@ -300,6 +353,14 @@ export function listDocuments(): Promise<DocumentMeta[]> {
 
 export function listTrash(): Promise<DocumentMeta[]> {
   return request<DocumentMeta[]>('/api/documents?trash=1');
+}
+
+export function reindexDocument(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, action: 'reindex' }),
+  });
 }
 
 export function restoreDocument(id: number): Promise<{ ok: true }> {
@@ -325,15 +386,24 @@ export function uploadFile(
   file: File,
   onProgress?: (percent: number) => void,
   encrypted = false,
+  replaceId?: number,
+  signal?: AbortSignal,
 ): Promise<DocumentMeta> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/upload');
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('x-noting-client', getSessionId());
+    const abort = () => xhr.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    const cleanup = () => signal?.removeEventListener('abort', abort);
 
-    const token = getToken();
-    if (token) xhr.setRequestHeader('x-bridge-token', token);
-    const answer = getAnswer();
-    if (answer) xhr.setRequestHeader('x-bridge-answer', answer);
+    if (!isSessionActive()) {
+      const token = getToken();
+      if (token) xhr.setRequestHeader('x-bridge-token', token);
+      const answer = getAnswer();
+      if (answer) xhr.setRequestHeader('x-bridge-answer', answer);
+    }
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
@@ -342,6 +412,7 @@ export function uploadFile(
     };
 
     xhr.onload = () => {
+      cleanup();
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText) as DocumentMeta);
@@ -359,13 +430,21 @@ export function uploadFile(
       reject(new ApiError(xhr.status, message));
     };
 
-    xhr.onerror = () => reject(new ApiError(0, 'Network error during upload'));
-    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'));
+    xhr.onerror = () => {
+      cleanup();
+      reject(new ApiError(0, 'Network error during upload'));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new ApiError(0, 'Upload cancelled'));
+    };
 
     const form = new FormData();
     form.append('file', file);
     if (encrypted) form.append('enc', '1');
-    xhr.send(form);
+    if (replaceId !== undefined) form.append('replace_id', String(replaceId));
+    if (signal?.aborted) xhr.abort();
+    else xhr.send(form);
   });
 }
 
@@ -377,10 +456,17 @@ export interface FetchedDocument {
 }
 
 /** Authed fetch → blob, so the token never lands in history/logs. */
-export async function fetchDocumentBlob(id: number): Promise<FetchedDocument> {
+export async function fetchDocumentBlob(
+  id: number,
+  includeTrash = false,
+): Promise<FetchedDocument> {
   let res: Response;
   try {
-    res = await fetch(`/api/download?id=${id}`, { headers: bridgeHeaders() });
+    res = await fetch(`/api/download?id=${id}${includeTrash ? '&trash=1' : ''}`, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: bridgeHeaders({ 'x-noting-client': getSessionId() }),
+    });
   } catch {
     throw new ApiError(0, 'Network error — check your connection');
   }
@@ -421,6 +507,47 @@ export function triggerBlobDownload(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+export interface SessionResult {
+  user_id: string;
+  expires_at: string;
+}
+
+export async function createSession(
+  token: string,
+  answer: string,
+  recoveryCode?: string,
+): Promise<SessionResult> {
+  let res: Response;
+  try {
+    res = await fetch('/api/session', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'x-noting-client': getSessionId() },
+      body: JSON.stringify({ token, answer, recovery_code: recoveryCode }),
+    });
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+  if (!res.ok) {
+    const body = await readJson(res).catch(() => null);
+    throw new ApiError(res.status, errorFromBody(body, 'Could not unlock workspace'));
+  }
+  return (await readJson(res)) as SessionResult;
+}
+
+export async function endSession(): Promise<void> {
+  try {
+    await fetch('/api/session', {
+      method: 'DELETE',
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+  } catch {
+    return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Self-service tokens + Q&A + hint (public, unauthenticated — token travels
 // in the JSON body, never in headers or URLs).
@@ -458,6 +585,7 @@ export interface ChallengeSolution {
 
 export interface MintResult {
   token_plaintext: string;
+  recovery_code: string;
   user_id: string;
   question: string;
 }
@@ -467,7 +595,8 @@ async function publicRequest<T>(path: string, body: unknown): Promise<T> {
   try {
     res = await fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'x-noting-client': getSessionId() },
       body: JSON.stringify(body),
     });
   } catch {
@@ -483,7 +612,7 @@ async function publicRequest<T>(path: string, body: unknown): Promise<T> {
 export async function fetchChallenge(): Promise<Challenge> {
   let res: Response;
   try {
-    res = await fetch('/api/challenge');
+    res = await fetch('/api/challenge', { headers: { 'x-noting-client': getSessionId() } });
   } catch {
     throw new ApiError(0, 'Network error — check your connection');
   }
@@ -499,6 +628,7 @@ export async function fetchChallenge(): Promise<Challenge> {
 
 export function mintToken(input: {
   label?: string;
+  inviteCode?: string;
   question: string;
   answer: string;
   hint?: string;
@@ -507,7 +637,10 @@ export function mintToken(input: {
   /** Cloudflare Turnstile client token (fallback only). */
   turnstileToken?: string;
 }): Promise<MintResult> {
-  return publicRequest<MintResult>('/api/tokens', input);
+  return publicRequest<MintResult>('/api/tokens', {
+    ...input,
+    invite_code: input.inviteCode,
+  });
 }
 
 export function fetchQuestion(

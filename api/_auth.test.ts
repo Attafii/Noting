@@ -15,6 +15,7 @@ import {
   hashToken,
   isValidSessionId,
   issueChallenge,
+  newRecoveryCode,
   newTokenPlaintext,
   newUserId,
   normalizeAnswer,
@@ -23,6 +24,7 @@ import {
   signChallenge,
   unauthorizedResponse,
   verifyChallenge,
+  verifyRecoveryCode,
 } from './_auth';
 
 function fakeReq(token?: unknown, answer?: unknown): VercelRequest {
@@ -64,6 +66,44 @@ describe('normalizeAnswer', () => {
   it('trims and lowercases (Hello == hello, padded matches)', () => {
     expect(normalizeAnswer('  Hello ')).toBe('hello');
     expect(normalizeAnswer('HELLO')).toBe('hello');
+  });
+});
+
+describe('recovery codes', () => {
+  const recovery = 'rec_example-code';
+
+  beforeEach(() => {
+    mockQuery.mockReset();
+    clearAuthCache();
+  });
+
+  it('creates a high-entropy recovery code', () => {
+    const code = newRecoveryCode();
+    expect(code).toMatch(/^rec_[A-Za-z0-9_-]{20,}$/);
+  });
+
+  it('verifies a recovery code against its stored hash', async () => {
+    mockQuery
+      .mockResolvedValueOnce([
+        {
+          id: 'u_test123',
+          recovery_hash: hashAnswer(normalizeAnswer(recovery), SALT),
+          recovery_salt: SALT,
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    await expect(verifyRecoveryCode(TOKEN, recovery)).resolves.toBe('u_test123');
+  });
+
+  it('rejects an incorrect recovery code', async () => {
+    mockQuery.mockResolvedValueOnce([
+      {
+        id: 'u_test123',
+        recovery_hash: hashAnswer(normalizeAnswer(recovery), SALT),
+        recovery_salt: SALT,
+      },
+    ]);
+    await expect(verifyRecoveryCode(TOKEN, 'rec_wrong-code')).resolves.toBeNull();
   });
 });
 

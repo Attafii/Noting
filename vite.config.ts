@@ -11,7 +11,7 @@ export default defineConfig({
     // Dev only (apply: 'serve'): runs the Vercel functions locally.
     vercelApiBridge(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       manifest: {
         name: 'noting',
         short_name: 'noting',
@@ -37,7 +37,7 @@ export default defineConfig({
       },
       workbox: {
         // App shell offline-first; API always goes to network (freshness wins,
-        // offline note edits are queued in localStorage by the editor).
+        // offline note edits are encrypted in IndexedDB by the editor).
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.destination === 'document',

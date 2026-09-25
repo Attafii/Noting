@@ -3,10 +3,12 @@ import {
   hashAnswer,
   hashToken,
   isValidSessionId,
+  newRecoveryCode,
   newSaltHex,
   newTokenPlaintext,
   newUserId,
   normalizeAnswer,
+  normalizeRecoveryCode,
 } from './_auth.js';
 import { verifyChallenge } from './_challenge.js';
 import { verifyTurnstile } from './_turnstile.js';
@@ -21,39 +23,17 @@ function cleanStr(v: unknown, max: number): string | null {
   return t;
 }
 
-async function ensureTables(sql: ReturnType<typeof getSql>): Promise<void> {
-  await sql.query(
-    `CREATE TABLE IF NOT EXISTS access_tokens (
-      id TEXT PRIMARY KEY,
-      token_hash TEXT NOT NULL UNIQUE,
-      label TEXT NOT NULL DEFAULT '',
-      question TEXT NOT NULL,
-      answer_hash TEXT NOT NULL,
-      answer_salt TEXT NOT NULL,
-      hint TEXT NOT NULL DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      last_used_at TIMESTAMPTZ DEFAULT NULL
-    )`,
-  );
-  await sql.query(
-    'CREATE INDEX IF NOT EXISTS access_tokens_hash_idx ON access_tokens (token_hash)',
-  );
-  await sql.query(
-    `CREATE TABLE IF NOT EXISTS hint_grants (
-      token_id TEXT NOT NULL REFERENCES access_tokens(id) ON DELETE CASCADE,
-      session_id TEXT NOT NULL,
-      revealed_at TIMESTAMPTZ DEFAULT NOW(),
-      PRIMARY KEY (token_id, session_id)
-    )`,
-  );
-}
-
 /**
  * Self-service token mint. No auth, strict rate limit (~5/min bucket),
  * built-in human-check required. Generates ntk_… + u_… server-side, stores
- * ONLY hashes. Returns the token plaintext ONCE — it is never returnable
- * again. Never returns the answer or hint.
+ * only hashes, and returns the token and recovery code once.
  */
+function selfServiceEnabled(): boolean {
+  const configured = process.env.PUBLIC_SELF_SERVICE_TOKENS;
+  if (configured !== undefined) return configured === 'true';
+  return process.env.NODE_ENV !== 'production';
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -63,6 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = (req.body ?? {}) as {
     label?: unknown;
+    invite_code?: unknown;
     question?: unknown;
     answer?: unknown;
     hint?: unknown;
@@ -117,11 +98,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(400).json({ error: 'label must be 0–40 characters' });
     return;
   }
+  const inviteCode = cleanStr(body.invite_code ?? '', 200) ?? '';
+  const inviteRequired = !selfServiceEnabled();
+  if (inviteRequired && !inviteCode) {
+    res.status(403).json({ error: 'An invite code is required on this deployment' });
+    return;
+  }
 
   const tokenPlaintext = newTokenPlaintext();
   const userId = newUserId();
   const salt = newSaltHex();
   const answerHash = hashAnswer(normalizeAnswer(answerRaw), salt);
+  const recoveryCode = newRecoveryCode();
+  const recoverySalt = newSaltHex();
+  const recoveryHash = hashAnswer(normalizeRecoveryCode(recoveryCode), recoverySalt);
 
   let sql: ReturnType<typeof getSql>;
   try {
@@ -134,19 +124,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(503).json({ error: 'Database unavailable — try again in a moment' });
     return;
   }
+  let inviteReserved = false;
+  if (inviteRequired) {
+    try {
+      const inviteRows = await sql.query(
+        `UPDATE workspace_invites SET used_at = NOW()
+         WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+         RETURNING id`,
+        [hashToken(inviteCode)],
+      );
+      if (inviteRows.length === 0) {
+        res.status(403).json({ error: 'Invite code is invalid or expired' });
+        return;
+      }
+      inviteReserved = true;
+    } catch (error) {
+      console.error('tokens mint: invite store unavailable', error);
+      res.status(503).json({ error: 'Database unavailable — try again in a moment' });
+      return;
+    }
+  }
+
   // Cold-start tolerance: a sleeping Neon project drops the first query.
   // Every query is bounded so a hang becomes a fast 503, never a platform
   // timeout 500. Retry once for connection-class errors only (same ids —
   // a validation error fails fast with no retry).
-  const params = [userId, hashToken(tokenPlaintext), label, question, answerHash, salt, hint];
+  const params = [
+    userId,
+    hashToken(tokenPlaintext),
+    label,
+    question,
+    answerHash,
+    salt,
+    hint,
+    recoveryHash,
+    recoverySalt,
+  ];
   let minted = false;
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      await withQueryTimeout(ensureTables(sql).catch(() => undefined), 8000);
       await withQueryTimeout(
         sql.query(
-          'INSERT INTO access_tokens (id, token_hash, label, question, answer_hash, answer_salt, hint) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          'INSERT INTO access_tokens (id, token_hash, label, question, answer_hash, answer_salt, hint, recovery_hash, recovery_salt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
           params,
         ),
         8000,
@@ -164,6 +184,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   if (!minted) {
+    if (inviteReserved) {
+      await sql
+        .query(
+          'UPDATE workspace_invites SET used_at = NULL WHERE code_hash = $1 AND used_at IS NOT NULL',
+          [hashToken(inviteCode)],
+        )
+        .catch(() => undefined);
+    }
     // Unreachable DB (not bad input) → 503 so the client shows "waking up".
     if (isColdStartError(lastError)) {
       res.status(503).json({ error: 'Database unavailable — try again in a moment' });
@@ -173,7 +201,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  res.status(201).json({ token_plaintext: tokenPlaintext, user_id: userId, question });
+  res.status(201).json({
+    token_plaintext: tokenPlaintext,
+    recovery_code: recoveryCode,
+    user_id: userId,
+    question,
+  });
 }
 
 /** Re-exported for tests: session-id shape shared with the hint endpoint. */

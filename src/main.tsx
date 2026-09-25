@@ -6,6 +6,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
 import './styles.css';
 import { initTheme } from './lib/theme';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 
 // Apply persisted theme before first paint (avoids a dark→light flash).
 initTheme();
@@ -20,11 +21,9 @@ const Devtools = lazy(() =>
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5,
-      // All failure surfaces are explicit (skeletons → error cards, toasts);
-      // silent background retries would only mask invalid-token states.
-      retry: false,
-      refetchOnWindowFocus: false,
+      staleTime: 1000 * 30,
+      retry: 1,
+      refetchOnWindowFocus: true,
     },
   },
 });
@@ -32,12 +31,14 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      {import.meta.env.DEV && (
-        <Suspense fallback={null}>
-          <Devtools initialIsOpen={false} />
-        </Suspense>
-      )}
+      <AppErrorBoundary>
+        <RouterProvider router={router} />
+        {import.meta.env.DEV && (
+          <Suspense fallback={null}>
+            <Devtools initialIsOpen={false} />
+          </Suspense>
+        )}
+      </AppErrorBoundary>
     </QueryClientProvider>
   </StrictMode>,
 );

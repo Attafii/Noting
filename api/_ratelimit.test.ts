@@ -119,14 +119,14 @@ describe('enforceRateLimit', () => {
     expect(hits[0]).not.toContain('5.6.7.8');
   });
 
-  it('fails OPEN when the store throws (availability over strictness)', async () => {
+  it('fails closed when the store throws', async () => {
     const broken: RateLimitStore = {
       async check() {
         throw new Error('db down');
       },
     };
     const res = fakeRes();
-    await expect(check(fakeReq('any-token'), res, 10, broken)).resolves.toBe(true);
-    expect(res.statusCode).toBe(0);
+    await expect(check(fakeReq('any-token'), res, 10, broken)).resolves.toBe(false);
+    expect(res.statusCode).toBe(503);
   });
 });
