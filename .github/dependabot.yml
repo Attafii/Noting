@@ -5,3 +5,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    # Vite is verified on the 6.x line. @vitejs/plugin-react 6.x requires
+    # Vite 8 as a peer, so bumping the plugin alone breaks `npm install`
+    # (ERESOLVE) and fails the Vercel build. Upgrade Vite to 8 first, then
+    # lift these ignores in the same pull request.
+    ignore:
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['>=5.0.0']
+      - dependency-name: 'vite'
+        versions: ['>=7.0.0']

@@ -3,6 +3,8 @@
 -- Safe to re-run. Requires the pgvector extension (enabled in schema.sql).
 -- Embeddings come from nvidia/embed-qa-4 → native 1024 dimensions.
 
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS document_chunks (
     id SERIAL PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,

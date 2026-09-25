@@ -1,3 +1,6 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS vector;
+
 ALTER TABLE notes ADD COLUMN IF NOT EXISTS content_version BIGINT NOT NULL DEFAULT 1;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_version BIGINT NOT NULL DEFAULT 1;
 ALTER TABLE note_revisions ADD COLUMN IF NOT EXISTS source_version BIGINT;
@@ -61,6 +64,23 @@ CREATE TABLE IF NOT EXISTS index_jobs (
 );
 CREATE INDEX IF NOT EXISTS index_jobs_ready_idx ON index_jobs (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS index_jobs_document_idx ON index_jobs (document_id, created_at DESC);
+
+-- Existing uploads have no chunks on databases that predate the RAG tables.
+-- Mark them queued and enqueue a job so Ask re-indexes them on first use.
+UPDATE documents d
+SET index_status = 'queued'
+WHERE d.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM document_chunks c WHERE c.document_id = d.id);
+
+INSERT INTO index_jobs (user_id, document_id, status)
+SELECT d.user_id, d.id, 'queued'
+FROM documents d
+WHERE d.deleted_at IS NULL
+  AND d.user_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM document_chunks c WHERE c.document_id = d.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM index_jobs j WHERE j.document_id = d.id AND j.status IN ('queued', 'running')
+  );
 
 CREATE INDEX IF NOT EXISTS notes_content_trgm_idx
   ON notes USING gin (content gin_trgm_ops)
