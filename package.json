@@ -45,7 +45,7 @@
     "@tanstack/react-query-devtools": "^5.75.5",
     "@tanstack/router-plugin": "^1.114.33",
     "@types/busboy": "^1.5.4",
-    "@types/node": "^22.15.3",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vercel/node": "^5.8.22",
