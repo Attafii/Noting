@@ -49,7 +49,7 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vercel/node": "^5.8.22",
-    "@vitejs/plugin-react": "^4.4.2",
+    "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.21",
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.1.1",
