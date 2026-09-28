@@ -17,6 +17,7 @@
     "test": "vitest run",
     "migrate": "node scripts/migrate.cjs",
     "backfill:owner": "node scripts/backfill-owner.cjs",
+    "reindex:queue": "node scripts/queue-reindex.cjs",
     "create:invite": "node scripts/create-invite.cjs",
     "purge:retention": "node scripts/purge-retention.cjs"
   },

@@ -63,6 +63,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 | `npm run format` / `npm run format:check` | Prettier write / check                  |
 | `npm run migrate -- --all`                | Apply checksummed migrations            |
 | `npm run backfill:owner`                  | Preview/apply legacy ownership          |
+| `npm run reindex:queue`                   | Queue indexing for files without chunks |
 | `npm run create:invite -- <code>`         | Create a one-time invite code           |
 | `npm run purge:retention`                 | Run scheduled trash/session cleanup     |
 
