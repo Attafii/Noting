@@ -48,8 +48,13 @@ export async function checkNoteQuota(userId: string): Promise<void> {
   }
 }
 
+/** Daily AI-call budget per user — shared by the spend guard and /api/usage. */
+export function aiDailyLimit(): number {
+  return envInt('MAX_AI_CALLS_PER_DAY', 100);
+}
+
 export async function consumeAiBudget(userId: string): Promise<void> {
-  const dailyLimit = envInt('MAX_AI_CALLS_PER_DAY', 100);
+  const dailyLimit = aiDailyLimit();
   const sql = getSql();
   const rows = await sql.query(
     `INSERT INTO workspace_ai_usage (user_id, usage_day, calls)

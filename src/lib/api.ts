@@ -69,6 +69,8 @@ export interface UsageStats {
   trashedNotes: { count: number };
   files: { count: number; bytes: number };
   trashedFiles: { count: number };
+  /** AI calls spent today against the daily workspace budget. */
+  ai: { calls: number; limit: number };
 }
 
 export type NoteSort = 'updated' | 'created' | 'alpha' | 'manual';

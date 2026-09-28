@@ -7,7 +7,7 @@ export const WINDOW_MS = 60_000;
 const DEFAULT_LIMIT = 120;
 
 /**
- * DB-backed sliding-window limiter, keyed by token hash prefix.
+ * DB-backed sliding-window limiter, keyed by token hash prefix + scope.
  *
  * Privacy: NO IP tracking — the key derives only from sha256(x-bridge-token
  * or x-bridge-answer context). No `x-forwarded-for` is read anywhere.
@@ -39,6 +39,15 @@ export interface RateLimitOptions {
   limit?: number;
   /** Injectable store — memory default keeps unit tests fast and offline. */
   store?: RateLimitStore;
+  /**
+   * Bucket namespace: `${clientKey}:${scope}`. Each purpose (auth gate, AI
+   * calls, uploads, credential entry points, general traffic) gets its own
+   * bucket so a tight per-route limit only counts that route's traffic —
+   * before scoping, every check shared one bucket, so e.g. the auth gate's
+   * small budget was consumed by note autosaves and AI calls by anything.
+   * Defaults to 'general'.
+   */
+  scope?: string;
 }
 
 export interface RateLimitDecision {
@@ -128,7 +137,7 @@ export async function enforceRateLimit(
   const limit = options?.limit ?? DEFAULT_LIMIT;
   const store = options?.store ?? defaultStore();
   const now = Date.now();
-  const key = clientKey(req);
+  const key = `${clientKey(req)}:${options?.scope ?? 'general'}`;
 
   let decision: RateLimitDecision;
   try {

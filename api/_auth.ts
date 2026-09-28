@@ -205,7 +205,11 @@ export async function resolveAuth(req: VercelRequest): Promise<AuthResult | null
  * the shape matches a missing resource rather than an auth oracle).
  */
 export async function requireUser(req: VercelRequest, res: VercelResponse): Promise<string | null> {
-  if (!(await enforceRateLimit(req, res, { limit: 20 }))) return null;
+  // Coarse per-client flood gate for data endpoints (runs before auth so a
+  // credential flood never reaches the DB). Its own scope: without one it
+  // shared a bucket with every route, so the small budget here was eaten by
+  // legitimate autosaves and AI calls — and in turn capped every endpoint.
+  if (!(await enforceRateLimit(req, res, { limit: 120, scope: 'auth' }))) return null;
   const auth = await resolveAuth(req);
   if (auth !== null && 'userId' in auth) return auth.userId;
   if (auth !== null && 'admin' in auth) {

@@ -341,11 +341,15 @@ function SettingsPage() {
                   label="Files in trash"
                   value={String(usageQuery.data.trashedFiles.count)}
                 />
+                <UsageCell
+                  label="AI calls today"
+                  value={`${usageQuery.data.ai.calls} / ${usageQuery.data.ai.limit}`}
+                />
               </div>
             )}
             <p className="text-[11px] text-zinc-600">
               Trash auto-removes items after 30 days. Storage and AI limits are enforced per
-              workspace.
+              workspace — the AI counter resets daily.
             </p>
           </CardContent>
         </Card>

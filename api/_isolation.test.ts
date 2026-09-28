@@ -157,11 +157,12 @@ describe('per-user isolation: every query is scoped to the caller', () => {
       .mockResolvedValueOnce([{ count: 0, bytes: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0, bytes: 0 }])
-      .mockResolvedValueOnce([{ count: 0 }]);
+      .mockResolvedValueOnce([{ count: 0 }])
+      .mockResolvedValueOnce([{ calls: 0 }]); // today's AI usage
     const r = res();
     await usageHandler(req('GET'), r as unknown as VercelResponse);
     expect(r.statusCode).toBe(200);
-    expect(dataQuery).toHaveBeenCalledTimes(4);
+    expect(dataQuery).toHaveBeenCalledTimes(5);
     for (const [text, params] of dataQuery.mock.calls) {
       expect(String(text)).toContain('user_id');
       expect(params).toEqual([USER_A]);

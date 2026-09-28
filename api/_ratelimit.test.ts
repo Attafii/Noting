@@ -49,10 +49,12 @@ function check(
   res: TestRes,
   limit?: number,
   store?: RateLimitStore,
+  scope?: string,
 ): Promise<boolean> {
   return enforceRateLimit(req, res as unknown as VercelResponse, {
     limit,
     store: store ?? memoryStore,
+    scope,
   });
 }
 
@@ -128,5 +130,54 @@ describe('enforceRateLimit', () => {
     const res = fakeRes();
     await expect(check(fakeReq('any-token'), res, 10, broken)).resolves.toBe(false);
     expect(res.statusCode).toBe(503);
+  });
+});
+
+describe('scope isolation (one bucket per purpose)', () => {
+  beforeEach(() => clearMemoryBuckets());
+
+  it('namespaces the bucket key by scope', async () => {
+    const keys: string[] = [];
+    const custom: RateLimitStore = {
+      async check(key: string) {
+        keys.push(key);
+        return { allowed: true, retryAfterSec: 0 };
+      },
+    };
+    await expect(check(fakeReq('scope-key-token'), fakeRes(), 10, custom, 'ai')).resolves.toBe(
+      true,
+    );
+    expect(keys[0]).toBe(
+      `u:${createHash('sha256').update('scope-key-token', 'utf8').digest('hex').slice(0, 16)}:ai`,
+    );
+  });
+
+  it('a tight scope budget does not consume other scopes', async () => {
+    for (let i = 0; i < 5; i++) {
+      await expect(check(fakeReq('multi-scope'), fakeRes(), 5, undefined, 'ai')).resolves.toBe(
+        true,
+      );
+    }
+    const res = fakeRes();
+    await expect(check(fakeReq('multi-scope'), res, 5, undefined, 'ai')).resolves.toBe(false);
+    expect(res.statusCode).toBe(429);
+    // Same client, different purpose: unaffected — this is the bug where the
+    // auth gate's budget was eaten by AI/autosave traffic (and vice versa).
+    await expect(check(fakeReq('multi-scope'), fakeRes(), 5, undefined, 'auth')).resolves.toBe(
+      true,
+    );
+    await expect(check(fakeReq('multi-scope'), fakeRes(), 5)).resolves.toBe(true);
+  });
+
+  it('defaults to the general scope', async () => {
+    const keys: string[] = [];
+    const custom: RateLimitStore = {
+      async check(key: string) {
+        keys.push(key);
+        return { allowed: true, retryAfterSec: 0 };
+      },
+    };
+    await check(fakeReq('default-scope-token'), fakeRes(), 10, custom);
+    expect(keys[0]).toMatch(/^u:[0-9a-f]{16}:general$/);
   });
 });

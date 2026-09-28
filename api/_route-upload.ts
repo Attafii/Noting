@@ -18,7 +18,9 @@ const MAX_BYTES = 4.5 * 1024 * 1024;
  * reason — busboy consumes `req` directly below.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
+  // Pre-auth flood gate (expensive 4.5MB parses): own scope so ordinary
+  // traffic can't exhaust it and it can't exhaust anything else.
+  if (!(await enforceRateLimit(req, res, { limit: 10, scope: 'upload' }))) return;
 
   // Multipart gate: busboy needs the raw stream, but auth must still run
   // first. Blind admin → 404 (sees nothing); unauthed → 401.
@@ -29,7 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
   const userId = auth.userId;
-  if (!(await enforceRateLimit(req, res, { limit: 30 }))) return;
+  if (!(await enforceRateLimit(req, res, { limit: 30, scope: 'upload-auth' }))) return;
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });

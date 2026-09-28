@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
-  if (!(await enforceRateLimit(req, res, { limit: 10 }))) return;
+  if (!(await enforceRateLimit(req, res, { limit: 10, scope: 'session' }))) return;
 
   const input = body(req);
   if (typeof input.token !== 'string') {

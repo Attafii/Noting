@@ -21,19 +21,54 @@ function orHeaders(): Record<string, string> {
   };
 }
 
-async function postWithTimeout(path: string, body: unknown, timeoutMs: number): Promise<Response> {
+type PostOutcome = { data: unknown } | { failure: 'timeout' | 'upstream'; status?: number };
+
+/**
+ * POST and parse JSON under ONE abort deadline covering headers AND body.
+ * Clearing the timer as soon as headers arrive (the old behaviour) lets a
+ * slow body stream well past the budget — measured 12s and 37s against the
+ * 9s/10s ceilings the callers document (Vercel Hobby kills functions at 10s),
+ * which turns a graceful fallback into a dead function.
+ */
+async function postJson(path: string, body: unknown, timeoutMs: number): Promise<PostOutcome> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(`${OR_BASE}${path}`, {
+    const res = await fetch(`${OR_BASE}${path}`, {
       method: 'POST',
       headers: orHeaders(),
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    if (!res.ok) return { failure: 'upstream', status: res.status };
+    return { data: await res.json() };
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') return { failure: 'timeout' };
+    return { failure: 'upstream' };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Repetition-loop detector for model degeneration (observed as runaway runs
+ * of a single character). English prose tops out around 20% for any one
+ * character (spaces), so >60% over a non-trivial length only happens when the
+ * model has derailed — routes then fall back instead of showing garbage.
+ */
+export function isDegenerate(text: string): boolean {
+  if (text.length < 40) return false;
+  const counts = new Map<string, number>();
+  let top = 0;
+  for (const ch of text) {
+    const n = (counts.get(ch) ?? 0) + 1;
+    counts.set(ch, n);
+    if (n > top) {
+      top = n;
+      if (top / text.length > 0.6) return true;
+    }
+  }
+  return top / text.length > 0.6;
 }
 
 export interface ChatMessage {
@@ -41,7 +76,7 @@ export interface ChatMessage {
   content: string;
 }
 
-export type ChatFailure = 'timeout' | 'upstream' | 'empty';
+export type ChatFailure = 'timeout' | 'upstream' | 'empty' | 'degenerate';
 
 /** Assistant text on success; a typed failure otherwise (no throws). */
 export async function chatComplete(
@@ -49,29 +84,26 @@ export async function chatComplete(
   timeoutMs = 8000,
   maxTokens = 2048,
 ): Promise<{ text: string } | { failure: ChatFailure }> {
-  try {
-    const res = await postWithTimeout(
-      '/chat/completions',
-      { model: CHAT_MODEL, messages, temperature: 0.3, max_tokens: maxTokens },
-      timeoutMs,
-    );
-    if (!res.ok) {
-      console.error('OpenRouter chat upstream status', res.status);
-      return { failure: 'upstream' };
-    }
-    const body = (await res.json()) as {
-      choices?: [{ message?: { content?: string } }];
-    };
-    const text = body.choices?.[0]?.message?.content;
-    return text ? { text } : { failure: 'empty' };
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') {
-      console.error('OpenRouter chat timeout');
-      return { failure: 'timeout' };
-    }
-    console.error('OpenRouter chat error', e);
-    return { failure: 'upstream' };
+  const outcome = await postJson(
+    '/chat/completions',
+    { model: CHAT_MODEL, messages, temperature: 0.3, max_tokens: maxTokens },
+    timeoutMs,
+  );
+  if ('failure' in outcome) {
+    if (outcome.failure === 'timeout') console.error('OpenRouter chat timeout');
+    else console.error('OpenRouter chat upstream status', outcome.status ?? 'network error');
+    return { failure: outcome.failure };
   }
+  const body = outcome.data as {
+    choices?: [{ message?: { content?: string } }];
+  };
+  const text = body.choices?.[0]?.message?.content;
+  if (!text) return { failure: 'empty' };
+  if (isDegenerate(text)) {
+    console.error('OpenRouter chat degenerate output', text.length);
+    return { failure: 'degenerate' };
+  }
+  return { text };
 }
 
 /**
@@ -81,27 +113,22 @@ export async function chatComplete(
  */
 export async function embedTexts(texts: string[], timeoutMs = 15000): Promise<number[][] | null> {
   if (texts.length === 0) return [];
-  try {
-    const res = await postWithTimeout(
-      '/embeddings',
-      { model: EMBED_MODEL, input: texts, encoding_format: 'float' },
-      timeoutMs,
-    );
-    if (!res.ok) {
-      console.error('OpenRouter embeddings upstream status', res.status);
-      return null;
-    }
-    const body = (await res.json()) as {
-      data?: [{ embedding?: number[] }];
-    };
-    const vectors = (body.data ?? [])
-      .map((d) => d.embedding)
-      .filter((v): v is number[] => Array.isArray(v) && v.length === EMBED_DIMS);
-    return vectors.length === texts.length ? vectors : null;
-  } catch (e) {
-    console.error('OpenRouter embeddings error', e);
+  const outcome = await postJson(
+    '/embeddings',
+    { model: EMBED_MODEL, input: texts, encoding_format: 'float' },
+    timeoutMs,
+  );
+  if ('failure' in outcome) {
+    console.error('OpenRouter embeddings failed', outcome.status ?? outcome.failure);
     return null;
   }
+  const body = outcome.data as {
+    data?: [{ embedding?: number[] }];
+  };
+  const vectors = (body.data ?? [])
+    .map((d) => d.embedding)
+    .filter((v): v is number[] => Array.isArray(v) && v.length === EMBED_DIMS);
+  return vectors.length === texts.length ? vectors : null;
 }
 
 /** pgvector text input: '[0.1,0.2,...]'. */

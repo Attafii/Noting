@@ -23,7 +23,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.status(503).json({ error: 'Human-check is not configured' });
       return;
     }
-    if (!(await enforceRateLimit(req, res, { limit: 30, store: memoryStore }))) return;
+    if (!(await enforceRateLimit(req, res, { limit: 30, store: memoryStore, scope: 'challenge' })))
+      return;
     // Single-use nonces — must never be cached anywhere.
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).json(issueChallenge());
