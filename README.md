@@ -42,9 +42,10 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
    - Fresh database: `npm run migrate -- --all`
    - Existing database: run `npm run migrate -- db/migrate-011-integrity.sql`
    - Verify the applied set with `npm run migrate -- status`
-4. For legacy rows with `user_id IS NULL`, preview and apply ownership explicitly:
-   - `OWNER_TOKEN=ntk_… npm run backfill:owner`
-   - `OWNER_TOKEN=ntk_… npm run backfill:owner -- --apply`
+4. For legacy rows with `user_id IS NULL`, preview and apply ownership explicitly (`OWNER_TOKEN` may be set inline or stored in `.env.local`):
+   - `npm run backfill:owner`
+   - `npm run backfill:owner -- --apply`
+   - Queue indexing for adopted files with `npm run reindex:queue -- --apply`.
 5. For an invite-only deployment, create one-time codes with `npm run create:invite -- <code> [valid-days]`; set `PUBLIC_SELF_SERVICE_TOKENS=false` in production.
 6. Run: `npm run dev` → open `http://localhost:5173/`
    - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.

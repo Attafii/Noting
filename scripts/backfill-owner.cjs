@@ -4,20 +4,29 @@ const fs = require('fs');
 const root = path.join(__dirname, '..');
 const { neon } = require(path.join(root, 'node_modules', '@neondatabase', 'serverless'));
 
-function loadConnection() {
-  if (process.env.NEON_CONNECTION_STRING) return process.env.NEON_CONNECTION_STRING;
+function loadLocalEnv() {
   const file = path.join(root, '.env.local');
-  if (!fs.existsSync(file)) return null;
+  if (!fs.existsSync(file)) return;
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const index = line.indexOf('=');
-    if (index > 0 && line.slice(0, index).trim() === 'NEON_CONNECTION_STRING') {
-      return line
-        .slice(index + 1)
-        .trim()
-        .replace(/^['"]|['"]$/g, '');
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const index = trimmed.indexOf('=');
+    if (index < 1) continue;
+    const key = trimmed.slice(0, index).trim();
+    let value = trimmed.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
     }
+    if (process.env[key] === undefined) process.env[key] = value;
   }
-  return null;
+}
+
+function loadConnection() {
+  loadLocalEnv();
+  return process.env.NEON_CONNECTION_STRING ?? null;
 }
 
 async function resolveOwner(sql) {
