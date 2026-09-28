@@ -7,6 +7,7 @@ import {
   Copy,
   CopyPlus,
   Download,
+  Feather,
   History,
   ListOrdered,
   Loader2,
@@ -75,6 +76,7 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Skeleton } from './ui/skeleton';
+import { WriteModal, type WritePlacement } from './WriteModal';
 
 // Split the markdown toolchain into its own chunk — only needed for preview.
 const MarkdownView = lazy(() =>
@@ -113,6 +115,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const [zen, setZen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
+  const [writeOpen, setWriteOpen] = useState(false);
   const [goal, setGoal] = useState<number>(() => {
     try {
       return parseInt(localStorage.getItem(`note-goal-${noteId}`) ?? '0', 10) || 0;
@@ -546,6 +549,32 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     format.mutate(text);
   }
 
+  /** Applies an AI-written draft; padding only when it would touch existing words. */
+  function handleWriteInsert(content: string, placement: WritePlacement) {
+    const previous = text;
+    setWriteOpen(false);
+    setMode('write');
+    if (placement === 'cursor') {
+      const sel = selectionOf();
+      const before = text.slice(0, sel.start);
+      const after = text.slice(sel.end);
+      const snippet = `${before.length > 0 && !/\s$/.test(before) ? '\n\n' : ''}${content}${
+        after.length > 0 && !/^\s/.test(after) ? '\n\n' : ''
+      }`;
+      applyEdit(insertSnippet(text, sel, snippet));
+    } else if (placement === 'append') {
+      setText(text.trim().length > 0 ? `${text.replace(/\s+$/, '')}\n\n${content}` : content);
+    } else {
+      setText(content);
+    }
+    toast.success('Draft added to note', {
+      action: {
+        label: 'Undo',
+        onClick: () => setText(previous),
+      },
+    });
+  }
+
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(text);
@@ -874,6 +903,14 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         onKeepMine={handleKeepMine}
         onKeepBoth={() => keepBoth.mutate()}
         onLoadTheirs={handleLoadTheirs}
+      />
+      <WriteModal
+        open={writeOpen}
+        onClose={() => setWriteOpen(false)}
+        onUnauthorized={onUnauthorized}
+        noteText={text}
+        encrypted={shouldEncrypt}
+        onInsert={handleWriteInsert}
       />
       <Card className="flex h-full flex-col overflow-hidden">
         <CardHeader>
@@ -1348,6 +1385,16 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               >
                 <Download />
                 <span className="hidden md:inline">Export</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setWriteOpen(true)}
+                title="Write new content with AI"
+                aria-label="Write with AI"
+              >
+                <Feather />
+                <span className="hidden md:inline">Write with AI</span>
               </Button>
               <Button
                 variant="accent"

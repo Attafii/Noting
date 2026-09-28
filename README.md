@@ -6,7 +6,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 
 - **Frontend:** React 19 + Vite 6 + TypeScript (strict) + Tailwind CSS v4 + TanStack Router (file-based) + TanStack Query + Motion + Sonner
 - **Backend:** Vercel serverless functions + Neon Postgres (`@neondatabase/serverless`, raw parameterized SQL — no ORM)
-- **AI:** OpenRouter (`meta-llama/llama-3.3-70b-instruct`) for note formatting, with graceful fallback
+- **AI:** OpenRouter (`meta-llama/llama-3.3-70b-instruct`) for note formatting, AI writing, and document Q&A, with graceful fallback
 
 ## Features
 
@@ -21,6 +21,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 - Multi-file parallel uploads with progress, file search, sizes, previews, download, trash (30-day restore window)
 - "Ask your documents": semantic search (pgvector + OpenRouter embeddings) with cited AI answers
 - "Format with AI" button with fallback to original text when the AI backend fails
+- "Write with AI" modal: describe what to write, pick style/structure/length presets (or one-tap actions like continue/summarize), preview the draft, then insert at cursor, append, replace, or copy — optional note-as-context, never sent for encrypted notes
 - End-to-end encryption (AES-GCM, token-derived key) for notes and files, with migration tools
 - Command palette (`Ctrl/Cmd+K`), keyboard shortcuts, full backup/restore as `.zip`
 - Per-endpoint rate limiting, security headers, health endpoint
@@ -74,25 +75,25 @@ CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, unit/API tes
 
 Data endpoints accept the HttpOnly `noting_session` cookie. During the transition, legacy `x-bridge-token` + `x-bridge-answer` headers remain supported for existing clients.
 
-| Method                | Endpoint             | Description                                                                                                                                 |
-| --------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET/POST/DELETE       | `/api/session`       | Establish, inspect, or revoke the short-lived HttpOnly workspace session                                                                    |
-| GET                   | `/api/health`        | Liveness/readiness probe + DB latency (unauthenticated)                                                                                     |
-| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` and `?q=` full-content search for plaintext notes)                    |
-| POST/PATCH/DELETE     | `/api/notes`         | Create / rename-pin-archive-organize / trash a note (`?trash=1` lists trash, restore via `{id, action:"restore"}`, `&permanent=1` destroys) |
-| GET/POST/PATCH/DELETE | `/api/folders`       | Notebooks/folders with note counts (notes survive folder deletes as Unfiled)                                                                |
-| GET                   | `/api/usage`         | Storage aggregates (notes/files counts + bytes, trash counts) for Settings and future plan limits                                           |
-| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST uses `base_version` and `mutation_id` for atomic conflict-safe saves and accepts an `enc` marker        |
-| GET                   | `/api/revisions`     | Last 20 revisions of a note (`?note_id=`)                                                                                                   |
-| GET                   | `/api/documents`     | Metadata; `?trash=1` lists soft-deleted (auto-purges after 30 days)                                                                         |
-| POST                  | `/api/documents`     | Restore or reindex a document (`{ id, action: "restore" }` / `"reindex"`)                                                                   |
-| DELETE                | `/api/documents?id=` | Soft-delete; `&permanent=1` destroys forever                                                                                                |
-| POST                  | `/api/upload`        | Multipart upload, 4.5MB limit; `enc=1` marks ciphertext; text files auto-index for search                                                   |
-| GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                     |
-| POST                  | `/api/ai`            | Format text via OpenRouter; returns original + warning on failure                                                                           |
-| POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                     |
-| GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                   |
-| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                       |
+| Method                | Endpoint             | Description                                                                                                                                                 |
+| --------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST/DELETE       | `/api/session`       | Establish, inspect, or revoke the short-lived HttpOnly workspace session                                                                                    |
+| GET                   | `/api/health`        | Liveness/readiness probe + DB latency (unauthenticated)                                                                                                     |
+| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` and `?q=` full-content search for plaintext notes)                                    |
+| POST/PATCH/DELETE     | `/api/notes`         | Create / rename-pin-archive-organize / trash a note (`?trash=1` lists trash, restore via `{id, action:"restore"}`, `&permanent=1` destroys)                 |
+| GET/POST/PATCH/DELETE | `/api/folders`       | Notebooks/folders with note counts (notes survive folder deletes as Unfiled)                                                                                |
+| GET                   | `/api/usage`         | Storage aggregates (notes/files counts + bytes, trash counts) for Settings and future plan limits                                                           |
+| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST uses `base_version` and `mutation_id` for atomic conflict-safe saves and accepts an `enc` marker                        |
+| GET                   | `/api/revisions`     | Last 20 revisions of a note (`?note_id=`)                                                                                                                   |
+| GET                   | `/api/documents`     | Metadata; `?trash=1` lists soft-deleted (auto-purges after 30 days)                                                                                         |
+| POST                  | `/api/documents`     | Restore or reindex a document (`{ id, action: "restore" }` / `"reindex"`)                                                                                   |
+| DELETE                | `/api/documents?id=` | Soft-delete; `&permanent=1` destroys forever                                                                                                                |
+| POST                  | `/api/upload`        | Multipart upload, 4.5MB limit; `enc=1` marks ciphertext; text files auto-index for search                                                                   |
+| GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                                     |
+| POST                  | `/api/ai`            | Format text (`{text}`) or generate a draft (`{action:"write", instruction, style?, structure?, length?, context?}`); original/fallback + warning on failure |
+| POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                                     |
+| GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                   |
+| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                       |
 
 Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint.
 

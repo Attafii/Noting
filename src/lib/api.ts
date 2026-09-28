@@ -358,6 +358,33 @@ export function formatNoteText(text: string, encrypted = false): Promise<FormatR
   });
 }
 
+/** Options for `writeWithAI` — preset ids come from `writing-presets.ts`. */
+export interface WriteRequest {
+  instruction: string;
+  style?: string;
+  structure?: string;
+  length?: string;
+  /** Current note text as source material (never sent for encrypted notes). */
+  context?: string;
+  encrypted?: boolean;
+}
+
+export interface WriteResult {
+  /** The generated draft; empty when `fallback` is set. */
+  text: string;
+  fallback?: boolean;
+  warning?: string;
+}
+
+/** `action: 'write'` on /api/ai — generate new content from an instruction. */
+export function writeWithAI(req: WriteRequest): Promise<WriteResult> {
+  return request<WriteResult>('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'write', ...req }),
+  });
+}
+
 export function listDocuments(): Promise<DocumentMeta[]> {
   return request<DocumentMeta[]>('/api/documents');
 }
