@@ -25,10 +25,10 @@ type PostOutcome = { data: unknown } | { failure: 'timeout' | 'upstream'; status
 
 /**
  * POST and parse JSON under ONE abort deadline covering headers AND body.
- * Clearing the timer as soon as headers arrive (the old behaviour) lets a
- * slow body stream well past the budget — measured 12s and 37s against the
- * 9s/10s ceilings the callers document (Vercel Hobby kills functions at 10s),
- * which turns a graceful fallback into a dead function.
+ * Clearing the timer as soon as headers arrive (the old behaviour) let a
+ * slow body stream indefinitely — measured 12s and 37s — with nothing to
+ * bound the request. Callers set their own ceilings (see vercel.json:
+ * api/router.ts has maxDuration 30).
  */
 async function postJson(path: string, body: unknown, timeoutMs: number): Promise<PostOutcome> {
   const controller = new AbortController();
@@ -76,12 +76,42 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Client history cap: last 6 turns (12 messages). */
+const HISTORY_MAX_MESSAGES = 12;
+/** Per-turn text cap so a client can't balloon the prompt. */
+const HISTORY_MAX_CHARS = 1000;
+
+/**
+ * Shape client-supplied conversation history into trusted ChatMessages.
+ * Strict allow-list (user/assistant only — 'system' is rejected), strings
+ * only, trimmed, per-message truncated, oldest messages dropped past the
+ * cap. Anything malformed is silently skipped rather than 400'ing, so
+ * older clients that don't send history keep working unchanged.
+ */
+export function sanitizeHistory(raw: unknown): ChatMessage[] {
+  if (!Array.isArray(raw)) return [];
+  const turns: ChatMessage[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { role, content } = entry as { role?: unknown; content?: unknown };
+    if (role !== 'user' && role !== 'assistant') continue;
+    if (typeof content !== 'string') continue;
+    const text = content.trim();
+    if (!text) continue;
+    turns.push({
+      role,
+      content: text.length > HISTORY_MAX_CHARS ? text.slice(0, HISTORY_MAX_CHARS) : text,
+    });
+  }
+  return turns.slice(-HISTORY_MAX_MESSAGES);
+}
+
 export type ChatFailure = 'timeout' | 'upstream' | 'empty' | 'degenerate';
 
 /** Assistant text on success; a typed failure otherwise (no throws). */
 export async function chatComplete(
   messages: ChatMessage[],
-  timeoutMs = 8000,
+  timeoutMs = 15000,
   maxTokens = 2048,
 ): Promise<{ text: string } | { failure: ChatFailure }> {
   const outcome = await postJson(

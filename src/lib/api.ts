@@ -112,6 +112,12 @@ export interface AskResult {
   mode?: 'vector' | 'keyword' | 'unavailable';
 }
 
+/** One prior conversation turn sent to /api/ask for follow-up context. */
+export interface AskTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface FormatResult {
   formatted: string;
   /** True when the AI backend failed and the original text was returned untouched. */
@@ -333,11 +339,14 @@ export function getUsage(): Promise<UsageStats> {
   return request<UsageStats>('/api/usage');
 }
 
-export function askQuestion(question: string): Promise<AskResult> {
+export function askQuestion(question: string, history?: AskTurn[]): Promise<AskResult> {
+  // Mirror of the server's cap (last 12 messages) so the payload stays
+  // bounded even in a long session; the server re-sanitizes regardless.
+  const turns = history?.slice(-12) ?? [];
   return request<AskResult>('/api/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify(turns.length > 0 ? { question, history: turns } : { question }),
   });
 }
 

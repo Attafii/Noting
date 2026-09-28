@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import { FileText, Loader2, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { ApiError, askQuestion, type AskResult, type AskSource } from '../lib/api';
+import { ApiError, askQuestion, type AskResult, type AskSource, type AskTurn } from '../lib/api';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -27,13 +27,28 @@ interface QAItem {
 
 let nextId = 0;
 
+/**
+ * The panel stores Q/As newest-first; the model needs oldest-first turns.
+ * Only answered exchanges count as turns — a warning-only exchange has no
+ * assistant reply to condition on.
+ */
+function toTurns(items: QAItem[]): AskTurn[] {
+  const turns: AskTurn[] = [];
+  for (const item of [...items].reverse()) {
+    if (!item.result.answer) continue;
+    turns.push({ role: 'user', content: item.question });
+    turns.push({ role: 'assistant', content: item.result.answer });
+  }
+  return turns;
+}
+
 export function AskPanel({ onUnauthorized, onOpenDocument }: AskPanelProps) {
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<QAItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const ask = useMutation({
-    mutationFn: askQuestion,
+    mutationFn: (q: string) => askQuestion(q, toTurns(history)),
     onMutate: () => setError(null),
     onSuccess: (result, asked) => {
       nextId += 1;
