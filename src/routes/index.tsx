@@ -171,15 +171,18 @@ function AuthedWorkspace({
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   // Adopt the first usable note when nothing (valid) is selected.
+  // While a refetch is in flight (e.g. right after creating a note), the cached
+  // list may not contain the freshly selected id yet — falling back there would
+  // bounce the user off the note they just created, so wait for the response.
   useEffect(() => {
     const notes = notesQuery.data;
     if (!notes || notes.length === 0) return;
     const valid = selectedId !== null && notes.some((note) => note.id === selectedId);
-    if (!valid) {
+    if (!valid && !notesQuery.isFetching) {
       const fallback = notes.find((note) => !note.archived) ?? notes[0];
       onSelect(fallback.id);
     }
-  }, [notesQuery.data, selectedId, onSelect]);
+  }, [notesQuery.data, notesQuery.isFetching, selectedId, onSelect]);
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
