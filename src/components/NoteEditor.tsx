@@ -914,8 +914,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       />
       <Card className="flex h-full flex-col overflow-hidden">
         <CardHeader>
-          <CardTitle className="truncate">{noteTitle}</CardTitle>
-          <div className="flex items-center gap-2">
+          <CardTitle className="min-w-0 max-w-[40%] truncate">{noteTitle}</CardTitle>
+          <div className="flex min-w-0 items-center gap-2">
             {shouldEncrypt && (
               <Badge
                 variant="accent"
@@ -925,7 +925,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 Encrypted
               </Badge>
             )}
-            <span className="hidden font-mono text-[11px] text-zinc-600 sm:inline">
+            <span className="hidden min-w-0 truncate font-mono text-[11px] text-zinc-600 2xl:inline-block">
               {words} {words === 1 ? 'word' : 'words'} · {text.length} chars
               {minutes > 0 && ` · ${minutes} min read`}
               {goal > 0 && (
@@ -939,7 +939,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               role="tablist"
               aria-label="Editor mode"
               title="Toggle Write/Preview with Ctrl+P"
-              className="flex rounded-lg border border-zinc-800 bg-zinc-950/70 p-0.5"
+              className="flex shrink-0 rounded-lg border border-zinc-800 bg-zinc-950/70 p-0.5"
             >
               <ModeTab
                 active={mode === 'write'}
