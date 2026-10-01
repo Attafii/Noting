@@ -5,3 +5,6 @@ dist
 .vercel
 .sisyphus/evidence/
 *.log
+test-results
+playwright-report
+tests/smoke/artifacts

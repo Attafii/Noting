@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:smoke": "playwright test",
     "migrate": "node scripts/migrate.cjs",
     "backfill:owner": "node scripts/backfill-owner.cjs",
     "reindex:queue": "node scripts/queue-reindex.cjs",
@@ -23,9 +24,9 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",
-    "busboy": "^1.6.0",
     "@tanstack/react-query": "^5.75.5",
     "@tanstack/react-router": "^1.114.33",
+    "busboy": "^1.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "fuse.js": "^7.5.0",
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.1",
     "@tanstack/react-query-devtools": "^5.75.5",
     "@tanstack/router-plugin": "^1.114.33",
@@ -49,7 +51,7 @@
     "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
-    "@vercel/node": "^5.8.22",
+    "@vercel/node": "^17.0.0",
     "@vitejs/plugin-react": "4.7.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^10.9.1",
@@ -64,5 +66,14 @@
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^1.3.0",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "@vercel/node": {
+      "undici": "^6.29.0",
+      "path-to-regexp": "^6.3.0"
+    },
+    "@vercel/static-config": {
+      "ajv": "^8.18.0"
+    }
   }
 }
