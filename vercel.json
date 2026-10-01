@@ -3,6 +3,7 @@
     { "source": "/api/ai", "destination": "/api/router?route=ai" },
     { "source": "/api/ask", "destination": "/api/router?route=ask" },
     { "source": "/api/challenge", "destination": "/api/router?route=challenge" },
+    { "source": "/api/cron-purge", "destination": "/api/router?route=cron-purge" },
     { "source": "/api/documents", "destination": "/api/router?route=documents" },
     { "source": "/api/download", "destination": "/api/router?route=download" },
     { "source": "/api/folders", "destination": "/api/router?route=folders" },
@@ -62,5 +63,11 @@
   ],
   "functions": {
     "api/router.ts": { "memory": 1024, "maxDuration": 30 }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/router?route=cron-purge",
+      "schedule": "0 4 * * *"
+    }
+  ]
 }

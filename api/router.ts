@@ -3,6 +3,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import aiHandler from './_route-ai.js';
 import askHandler from './_route-ask.js';
 import challengeHandler from './_route-challenge.js';
+import cronPurgeHandler from './_route-cron-purge.js';
 import documentsHandler from './_route-documents.js';
 import downloadHandler from './_route-download.js';
 import foldersHandler from './_route-folders.js';
@@ -42,6 +43,7 @@ const HANDLERS: Record<string, Handler> = {
   ai: aiHandler,
   ask: askHandler,
   challenge: challengeHandler,
+  'cron-purge': cronPurgeHandler,
   documents: documentsHandler,
   download: downloadHandler,
   folders: foldersHandler,

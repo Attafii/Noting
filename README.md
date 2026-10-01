@@ -34,6 +34,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 2. Copy `.env.example` to `.env.local` and fill in:
    - `GLOBAL_SECRET_TOKEN` — blind admin/configuration secret; generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
    - `CHALLENGE_SIGNING_SECRET` — separate HMAC secret for the built-in human-check
+   - `CRON_SECRET` — bearer secret for the daily `/api/cron-purge` retention sweep (Vercel Cron sends it automatically); generate like `GLOBAL_SECRET_TOKEN`
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
    - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
    - `PUBLIC_SELF_SERVICE_TOKENS=true` — explicitly enable public token creation; production defaults to invite-only/disabled
@@ -93,13 +94,14 @@ Data endpoints accept the HttpOnly `noting_session` cookie. During the transitio
 | POST                  | `/api/ai`            | Format text (`{text}`) or generate a draft (`{action:"write", instruction, style?, structure?, length?, context?}`); original/fallback + warning on failure |
 | POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                                     |
 | GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                   |
+| GET                   | `/api/cron-purge`    | Daily retention sweep (Vercel Cron, `Authorization: Bearer CRON_SECRET`): trash >30d, buckets >2h, sessions/invites >1d                                     |
 | POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                       |
 
 Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint.
 
 ## Deployment (Vercel)
 
-Set `GLOBAL_SECRET_TOKEN`, `CHALLENGE_SIGNING_SECRET`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. Keep public token creation disabled unless `PUBLIC_SELF_SERVICE_TOKENS=true` is intentionally configured. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, and security headers. Run `npm run purge:retention` from a daily scheduler to enforce trash, session, and rate-limit retention.
+Set `GLOBAL_SECRET_TOKEN`, `CHALLENGE_SIGNING_SECRET`, `CRON_SECRET`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. Keep public token creation disabled unless `PUBLIC_SELF_SERVICE_TOKENS=true` is intentionally configured. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, security headers, and a daily `04:00 UTC` retention cron (`/api/cron-purge`, authenticated by `CRON_SECRET`) — run `npm run purge:retention` manually only as a fallback outside Vercel.
 
 ## Security model
 
