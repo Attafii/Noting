@@ -46,7 +46,7 @@
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.1",
     "@tanstack/react-query-devtools": "^5.75.5",
-    "@tanstack/router-plugin": "^1.114.33",
+    "@tanstack/router-plugin": "^1.168.41",
     "@types/busboy": "^1.5.4",
     "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",
