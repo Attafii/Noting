@@ -167,3 +167,23 @@ CREATE INDEX IF NOT EXISTS notes_content_trgm_idx
 CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
   ON document_chunks USING hnsw (embedding vector_cosine_ops)
   WHERE embedding IS NOT NULL;
+
+-- migrate-012-reminders: per-note due date (metadata — never bumps updated_at).
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITH TIME ZONE NULL;
+CREATE INDEX IF NOT EXISTS notes_due_idx
+  ON notes (due_at)
+  WHERE due_at IS NOT NULL AND deleted_at IS NULL;
+
+-- migrate-013-shares: read-only share links (sha256(token) only; plaintext
+-- notes only). Plaintext token is shown once at creation, never stored.
+CREATE TABLE IF NOT EXISTS share_links (
+  id TEXT PRIMARY KEY,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES access_tokens(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  revoked_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS share_links_note_idx ON share_links (note_id);
+CREATE INDEX IF NOT EXISTS share_links_user_idx ON share_links (user_id);

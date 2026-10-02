@@ -9,9 +9,10 @@ import { cn } from '../lib/utils';
 interface SidePanelProps {
   onUnauthorized: () => void;
   onTabChange?: (tab: 'files' | 'ask') => void;
+  onOpenNote?: (noteId: number) => void;
 }
 
-export function SidePanel({ onUnauthorized, onTabChange }: SidePanelProps) {
+export function SidePanel({ onUnauthorized, onTabChange, onOpenNote }: SidePanelProps) {
   const [tab, setTab] = useState<'files' | 'ask'>('files');
 
   const selectTab = useCallback(
@@ -68,7 +69,11 @@ export function SidePanel({ onUnauthorized, onTabChange }: SidePanelProps) {
         <DocumentList onUnauthorized={onUnauthorized} />
       </div>
       <div className={cn('flex min-h-0 flex-col', tab !== 'ask' && 'hidden')}>
-        <AskPanel onUnauthorized={onUnauthorized} onOpenDocument={handleOpenDocument} />
+        <AskPanel
+          onUnauthorized={onUnauthorized}
+          onOpenDocument={handleOpenDocument}
+          onOpenNote={onOpenNote}
+        />
       </div>
     </div>
   );

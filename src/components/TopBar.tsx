@@ -35,10 +35,12 @@ export function TopBar({
   onMenu,
   onSettings,
   onLock,
+  onHome,
 }: {
   onMenu?: () => void;
   onSettings?: () => void;
   onLock?: () => void;
+  onHome?: () => void;
 }) {
   const save = useSaveStatus();
   const theme = useTheme();
@@ -68,6 +70,20 @@ export function TopBar({
     };
   }, []);
 
+  const brand = (
+    <>
+      <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
+        <SquareTerminal className="size-4" />
+      </span>
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
+        <span className="hidden truncate font-mono text-[11px] text-zinc-600 sm:inline">
+          cross-device bridge
+        </span>
+      </div>
+    </>
+  );
+
   return (
     <header className="sticky top-0 z-30 border-b border-zinc-800/70 bg-zinc-950/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
@@ -81,17 +97,18 @@ export function TopBar({
               <PanelLeft className="size-4" />
             </button>
           )}
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
-            <SquareTerminal className="size-4" />
-          </span>
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">
-              notes
-            </span>
-            <span className="hidden truncate font-mono text-[11px] text-zinc-600 sm:inline">
-              cross-device bridge
-            </span>
-          </div>
+          {onHome ? (
+            <button
+              onClick={onHome}
+              title="Home"
+              aria-label="Go home"
+              className="flex min-w-0 cursor-pointer items-center gap-2.5 transition-opacity hover:opacity-80"
+            >
+              {brand}
+            </button>
+          ) : (
+            <div className="flex min-w-0 items-center gap-2.5">{brand}</div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">

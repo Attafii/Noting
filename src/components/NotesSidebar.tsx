@@ -46,6 +46,7 @@ import {
 import { encryptText } from '../lib/crypto';
 import { getCryptoKey, useE2E } from '../lib/e2e';
 import { NOTE_TEMPLATES } from '../lib/note-templates';
+import { dueLabel, dueTone } from '../lib/due';
 import { SHORTCUT_EVENTS } from '../lib/shortcuts';
 import { timeAgo } from '../lib/format';
 import { cn } from '../lib/utils';
@@ -89,7 +90,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [folderFilter, setFolderFilter] = useState<number | 'all' | 'fav' | 'none'>('all');
+  const [folderFilter, setFolderFilter] = useState<number | 'all' | 'fav' | 'due' | 'none'>('all');
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -280,6 +281,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     }
     if (tagFilter && !(note.tags ?? []).includes(tagFilter)) return false;
     if (folderFilter === 'fav' && !note.favorite) return false;
+    if (folderFilter === 'due' && !note.due_at) return false;
     if (folderFilter === 'none' && note.folder_id !== null) return false;
     if (typeof folderFilter === 'number' && note.folder_id !== folderFilter) return false;
     return true;
@@ -303,7 +305,17 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     }
   };
 
-  const visible = notes.filter((note) => !note.archived && matches(note)).sort(sorter);
+  // In the Due filter, order by urgency: overdue first, then soonest first.
+  const dueSorter = (a: NoteSummary, b: NoteSummary) => {
+    const av = a.due_at ? Date.parse(a.due_at) : Number.MAX_SAFE_INTEGER;
+    const bv = b.due_at ? Date.parse(b.due_at) : Number.MAX_SAFE_INTEGER;
+    if (av !== bv) return av - bv;
+    return sorter(a, b);
+  };
+
+  const visible = notes
+    .filter((note) => !note.archived && matches(note))
+    .sort(folderFilter === 'due' ? dueSorter : sorter);
   const archived = notes.filter((note) => note.archived && matches(note)).sort(sorter);
   const favorites = notes.filter((note) => !note.archived && note.favorite);
 
@@ -495,6 +507,11 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
           active={folderFilter === 'fav'}
           label="★ Favorites"
           onClick={() => setFolderFilter('fav')}
+        />
+        <FilterPill
+          active={folderFilter === 'due'}
+          label="Due"
+          onClick={() => setFolderFilter('due')}
         />
         <FilterPill
           active={folderFilter === 'none'}
@@ -1219,6 +1236,19 @@ function NoteRow({
             </p>
           )}
           <p className="truncate font-mono text-[11px] text-zinc-600">
+            {note.due_at && (
+              <span
+                className={cn(
+                  'mr-1 rounded border px-1',
+                  dueTone(note.due_at) === 'overdue' && 'border-red-900/70 text-red-400',
+                  dueTone(note.due_at) === 'today' && 'border-amber-800/70 text-amber-400',
+                  dueTone(note.due_at) === 'soon' && 'border-zinc-700 text-zinc-400',
+                  dueTone(note.due_at) === 'later' && 'border-zinc-800 text-zinc-500',
+                )}
+              >
+                {dueLabel(note.due_at)}
+              </span>
+            )}
             {(note.preview ?? '').replace(/\s+/g, ' ').slice(0, 60) || 'Empty note'} ·{' '}
             {timeAgo(note.updated_at)}
           </p>

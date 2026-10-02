@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  CalendarClock,
   Check,
   Columns2,
   Copy,
@@ -16,6 +17,7 @@ import {
   Printer,
   ScanEye,
   Search,
+  Share2,
   Sparkles,
   Target,
   TriangleAlert,
@@ -37,6 +39,7 @@ import {
   type NoteSummary,
 } from '../lib/api';
 import { countWords, timeAgo } from '../lib/format';
+import { dueFromInput, dueInputValue, dueLabel, dueTone } from '../lib/due';
 import {
   SLASH_COMMANDS,
   applyHeading,
@@ -75,6 +78,7 @@ import { FindReplace } from './editor/FindReplace';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { ShareDialog } from './ShareDialog';
 import { Skeleton } from './ui/skeleton';
 import { WriteModal, type WritePlacement } from './WriteModal';
 
@@ -115,6 +119,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const [zen, setZen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
+  const [dueOpen, setDueOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [writeOpen, setWriteOpen] = useState(false);
   const [goal, setGoal] = useState<number>(() => {
     try {
@@ -162,6 +168,40 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   });
 
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
+
+  const noteMeta = notesQuery.data?.find((note) => note.id === noteId);
+  const dueAt = noteMeta?.due_at ?? null;
+
+  // One popover at a time — stacked popovers read as a bug.
+  function togglePopover(target: 'history' | 'toc' | 'export' | 'goal' | 'due') {
+    const open = {
+      history: historyOpen,
+      toc: tocOpen,
+      export: exportOpen,
+      goal: goalOpen,
+      due: dueOpen,
+    }[target];
+    setHistoryOpen(target === 'history' ? !open : false);
+    setTocOpen(target === 'toc' ? !open : false);
+    setExportOpen(target === 'export' ? !open : false);
+    setGoalOpen(target === 'goal' ? !open : false);
+    setDueOpen(target === 'due' ? !open : false);
+  }
+
+  // Reminder edits are metadata: the server keeps updated_at stable, so the
+  // conflict anchor is untouched by setting or clearing a due date.
+  const dueMutate = useMutation({
+    mutationFn: (next: string | null) => updateNote(noteId, { due_at: next }),
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success(vars === null ? 'Reminder cleared' : `Reminder set for ${dueLabel(vars)}`);
+      setDueOpen(false);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') onUnauthorized();
+      else toast.error(err instanceof Error ? err.message : 'Could not update the reminder');
+    },
+  });
 
   const noteEnc = noteQuery.data?.enc ?? false;
   const shouldEncrypt = noteEnc || e2e;
@@ -912,6 +952,14 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         encrypted={shouldEncrypt}
         onInsert={handleWriteInsert}
       />
+      <ShareDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        noteId={noteId}
+        noteTitle={noteTitle}
+        encrypted={shouldEncrypt}
+        onUnauthorized={onUnauthorized}
+      />
       <Card className="flex h-full flex-col overflow-hidden">
         <CardHeader>
           <CardTitle className="min-w-0 max-w-[40%] truncate">{noteTitle}</CardTitle>
@@ -1308,6 +1356,52 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
             )}
           </AnimatePresence>
 
+          <AnimatePresence>
+            {dueOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={{ duration: 0.16 }}
+                role="dialog"
+                aria-label="Reminder"
+                className="absolute right-3 bottom-14 z-20 w-64 max-w-[calc(100%-1.5rem)] rounded-xl border border-zinc-700/70 bg-zinc-900 p-3 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+              >
+                <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                  reminder
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={dueInputValue(dueAt)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === dueInputValue(dueAt)) return;
+                      if (value === '') {
+                        if (dueAt) dueMutate.mutate(null);
+                        return;
+                      }
+                      const iso = dueFromInput(value);
+                      if (iso) dueMutate.mutate(iso);
+                    }}
+                    aria-label="Due date"
+                    className="w-full cursor-pointer rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 [color-scheme:dark]"
+                  />
+                  {dueAt && (
+                    <Button size="sm" variant="ghost" onClick={() => dueMutate.mutate(null)}>
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-2 font-mono text-[11px] text-zinc-500">
+                  {dueAt
+                    ? `due ${dueLabel(dueAt).toLowerCase()} · shows on Home`
+                    : 'no reminder set · shows on Home when set'}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-zinc-800 px-4 py-2.5">
             <span className="font-mono text-[11px] text-zinc-500 sm:hidden">
               {words}w · {text.length}c
@@ -1329,7 +1423,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setTocOpen((open) => !open)}
+                onClick={() => togglePopover('toc')}
                 title="Note outline"
                 aria-expanded={tocOpen}
               >
@@ -1349,7 +1443,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setGoalOpen((open) => !open)}
+                onClick={() => togglePopover('goal')}
                 title="Word goal"
                 aria-expanded={goalOpen}
               >
@@ -1359,7 +1453,22 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setHistoryOpen((open) => !open)}
+                onClick={() => togglePopover('due')}
+                title={dueAt ? `Reminder: ${dueLabel(dueAt)}` : 'Set a reminder'}
+                aria-expanded={dueOpen}
+              >
+                <CalendarClock
+                  className={cn(
+                    dueAt && dueTone(dueAt) === 'overdue' && 'text-red-400',
+                    dueAt && dueTone(dueAt) === 'today' && 'text-amber-400',
+                  )}
+                />
+                <span className="hidden md:inline">{dueAt ? dueLabel(dueAt) : 'Due'}</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => togglePopover('history')}
                 title="Version history (Ctrl+H)"
                 aria-expanded={historyOpen}
               >
@@ -1379,12 +1488,25 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setExportOpen((open) => !open)}
+                onClick={() => togglePopover('export')}
                 title="Export, print, or duplicate this note"
                 aria-expanded={exportOpen}
               >
                 <Download />
                 <span className="hidden md:inline">Export</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShareOpen(true)}
+                title={
+                  shouldEncrypt
+                    ? 'Encrypted notes cannot be shared'
+                    : 'Create a read-only share link'
+                }
+              >
+                <Share2 />
+                <span className="hidden md:inline">Share</span>
               </Button>
               <Button
                 variant="secondary"

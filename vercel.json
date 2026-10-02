@@ -13,6 +13,8 @@
     { "source": "/api/notes", "destination": "/api/router?route=notes" },
     { "source": "/api/revisions", "destination": "/api/router?route=revisions" },
     { "source": "/api/session", "destination": "/api/router?route=session" },
+    { "source": "/api/share", "destination": "/api/router?route=share" },
+    { "source": "/api/shares", "destination": "/api/router?route=shares" },
     { "source": "/api/token-question", "destination": "/api/router?route=token-question" },
     { "source": "/api/tokens", "destination": "/api/router?route=tokens" },
     { "source": "/api/upload", "destination": "/api/router?route=upload" },

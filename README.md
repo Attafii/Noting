@@ -11,6 +11,8 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 ## Features
 
 - Multi-note workspace: sidebar with pin, favorite, folders, #tags, archive, rename, search, sort (updated/created/alpha/manual drag-reorder), bulk select, per-note history, and 30-day note trash
+- Home dashboard: quick capture (title from the first line), due-soon reminders, favorites, and live workspace stats (notes/files/storage/AI calls)
+- Reminders: per-note due dates (metadata-only — never bumps `updated_at` or the conflict anchor) with a Due sidebar filter, due/overdue badges, and a one-click clear
 - Rich editor: markdown toolbar, slash commands (`/h1 /todo /code /table`), Write/Preview/Split views, outline panel, find-and-replace, `[[wikilinks]]`, word goals, reading time, focus mode, per-note export (.md/.html/print/PDF/duplicate), templates, image paste-to-Files
 - Global fuzzy search in the command palette (`Ctrl/Cmd+K`) across notes, tags, and files
 - Light mode + accent picker (gold/emerald/cobalt) + density, resizable/collapsible layout, mobile bottom bar, Home dashboard, onboarding tour, `/welcome` landing page, full `/settings` page (appearance, editor prefs, shortcut customizer, storage usage)
@@ -19,7 +21,8 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 - Short-lived HttpOnly workspace sessions, one-time recovery codes, token revocation, and optional invite-only self-service
 - Version history (last 50 revisions per note) with one-click restore + undo
 - Multi-file parallel uploads with progress, file search, sizes, previews, download, trash (30-day restore window)
-- "Ask your documents": semantic search (pgvector + OpenRouter embeddings) with cited AI answers
+- "Ask" Q&A with scope tabs — search indexed documents, plaintext notes, or both; answers cite sources (document chips open the preview, note chips open the note), semantic search with keyword fallback
+- Read-only share links: expiring `/s?t=…` URLs (1–30 days) for plaintext notes — only sha256(token) is stored, links are revocable, encrypted notes can never be shared
 - "Format with AI" button with fallback to original text when the AI backend fails
 - "Write with AI" modal: describe what to write, pick style/structure/length presets (or one-tap actions like continue/summarize), preview the draft, then insert at cursor, append, replace, or copy — optional note-as-context, never sent for encrypted notes
 - End-to-end encryption (AES-GCM, token-derived key) for notes and files, with migration tools
@@ -42,7 +45,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
    - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → widget → Settings → Allowed hostnames `noting.attafii.dev` (+ `noting-notes.vercel.app` for the old URL, + `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget. After any domain move you must add the new hostname in that list AND set `TURNSTILE_ALLOWED_HOSTNAMES` (or rely on the updated defaults) — otherwise the widget shows a hostname error and `/api/tokens` rejects its tokens.
 3. Database migrations (the runner records checksums and skips completed files):
    - Fresh database: `npm run migrate -- --all`
-   - Existing database: run `npm run migrate -- db/migrate-011-integrity.sql`
+   - Existing database: run each new file in order — currently `npm run migrate -- db/migrate-011-integrity.sql`, then `db/migrate-012-reminders.sql`, then `db/migrate-013-shares.sql`
    - Verify the applied set with `npm run migrate -- status`
 4. For legacy rows with `user_id IS NULL`, preview and apply ownership explicitly (`OWNER_TOKEN` may be set inline or stored in `.env.local`):
    - `npm run backfill:owner`
@@ -76,28 +79,30 @@ CI (`.github/workflows/ci.yml`) runs typecheck, lint, format check, unit/API tes
 
 Data endpoints accept the HttpOnly `noting_session` cookie. During the transition, legacy `x-bridge-token` + `x-bridge-answer` headers remain supported for existing clients.
 
-| Method                | Endpoint             | Description                                                                                                                                                 |
-| --------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET/POST/DELETE       | `/api/session`       | Establish, inspect, or revoke the short-lived HttpOnly workspace session                                                                                    |
-| GET                   | `/api/health`        | Liveness/readiness probe + DB latency (unauthenticated)                                                                                                     |
-| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` and `?q=` full-content search for plaintext notes)                                    |
-| POST/PATCH/DELETE     | `/api/notes`         | Create / rename-pin-archive-organize / trash a note (`?trash=1` lists trash, restore via `{id, action:"restore"}`, `&permanent=1` destroys)                 |
-| GET/POST/PATCH/DELETE | `/api/folders`       | Notebooks/folders with note counts (notes survive folder deletes as Unfiled)                                                                                |
-| GET                   | `/api/usage`         | Storage aggregates (notes/files counts + bytes, trash counts) for Settings and future plan limits                                                           |
-| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST uses `base_version` and `mutation_id` for atomic conflict-safe saves and accepts an `enc` marker                        |
-| GET                   | `/api/revisions`     | Last 20 revisions of a note (`?note_id=`)                                                                                                                   |
-| GET                   | `/api/documents`     | Metadata; `?trash=1` lists soft-deleted (auto-purges after 30 days)                                                                                         |
-| POST                  | `/api/documents`     | Restore or reindex a document (`{ id, action: "restore" }` / `"reindex"`)                                                                                   |
-| DELETE                | `/api/documents?id=` | Soft-delete; `&permanent=1` destroys forever                                                                                                                |
-| POST                  | `/api/upload`        | Multipart upload, 4.5MB limit; `enc=1` marks ciphertext; text files auto-index for search                                                                   |
-| GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                                     |
-| POST                  | `/api/ai`            | Format text (`{text}`) or generate a draft (`{action:"write", instruction, style?, structure?, length?, context?}`); original/fallback + warning on failure |
-| POST                  | `/api/ask`           | Semantic Q&A over indexed documents, with cited sources                                                                                                     |
-| GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                   |
-| GET                   | `/api/cron-purge`    | Daily retention sweep (Vercel Cron, `Authorization: Bearer CRON_SECRET`): trash >30d, buckets >2h, sessions/invites >1d                                     |
-| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                       |
+| Method                | Endpoint             | Description                                                                                                                                                                                                     |
+| --------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST/DELETE       | `/api/session`       | Establish, inspect, or revoke the short-lived HttpOnly workspace session                                                                                                                                        |
+| GET                   | `/api/health`        | Liveness/readiness probe + DB latency (unauthenticated)                                                                                                                                                         |
+| GET                   | `/api/notes`         | Note list (titles, pins, previews, folders, favorites, tags; `?sort=` and `?q=` full-content search for plaintext notes)                                                                                        |
+| POST/PATCH/DELETE     | `/api/notes`         | Create / rename-pin-archive-organize / trash a note (`?trash=1` lists trash, restore via `{id, action:"restore"}`, `&permanent=1` destroys); PATCH `due_at` sets/clears a reminder without bumping `updated_at` |
+| GET/POST/PATCH/DELETE | `/api/folders`       | Notebooks/folders with note counts (notes survive folder deletes as Unfiled)                                                                                                                                    |
+| GET                   | `/api/usage`         | Storage aggregates (notes/files counts + bytes, trash counts) for Settings and future plan limits                                                                                                               |
+| GET/POST              | `/api/note`          | Load / save one note (`?id=`); POST uses `base_version` and `mutation_id` for atomic conflict-safe saves and accepts an `enc` marker                                                                            |
+| GET                   | `/api/revisions`     | Last 20 revisions of a note (`?note_id=`)                                                                                                                                                                       |
+| GET                   | `/api/documents`     | Metadata; `?trash=1` lists soft-deleted (auto-purges after 30 days)                                                                                                                                             |
+| POST                  | `/api/documents`     | Restore or reindex a document (`{ id, action: "restore" }` / `"reindex"`)                                                                                                                                       |
+| DELETE                | `/api/documents?id=` | Soft-delete; `&permanent=1` destroys forever                                                                                                                                                                    |
+| POST                  | `/api/upload`        | Multipart upload, 4.5MB limit; `enc=1` marks ciphertext; text files auto-index for search                                                                                                                       |
+| GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                                                                                         |
+| POST                  | `/api/ai`            | Format text (`{text}`) or generate a draft (`{action:"write", instruction, style?, structure?, length?, context?}`); original/fallback + warning on failure                                                     |
+| POST                  | `/api/ask`           | Q&A with `{ scope: docs \| notes \| all }` over indexed documents and/or plaintext notes; cited sources, keyword fallback                                                                                       |
+| GET                   | `/api/share?t=`      | Public read-only note behind a share token (unauthenticated; only sha256 hashes are stored, uniform 404, 30/min)                                                                                                |
+| GET/POST/DELETE       | `/api/shares`        | Manage the caller's share links: list (`?note_id=`), mint (`{ note_id, days }`, plaintext token returned once), revoke (`?id=`) — plaintext notes only                                                          |
+| GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                                                                       |
+| GET                   | `/api/cron-purge`    | Daily retention sweep (Vercel Cron, `Authorization: Bearer CRON_SECRET`): trash >30d, buckets >2h, sessions/invites >1d                                                                                         |
+| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                                                                           |
 
-Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint.
+Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint, 20/min share management, 30/min share reads.
 
 ## Deployment (Vercel)
 

@@ -7,7 +7,7 @@ import type { NeonQueryFunction } from '@neondatabase/serverless';
 
 const LIST_COLUMNS =
   'notes.id, notes.title, notes.pinned, notes.archived, notes.enc, notes.content_version, notes.folder_id, notes.favorite, ' +
-  'notes.sort_order, notes.updated_at, notes.created_at, LEFT(notes.content, 160) AS preview, ' +
+  'notes.sort_order, notes.due_at, notes.updated_at, notes.created_at, LEFT(notes.content, 160) AS preview, ' +
   'CASE WHEN notes.enc = FALSE THEN LEFT(notes.content, 4000) ELSE NULL END AS search_text, ' +
   "(SELECT COALESCE(array_agg(t.tag), '{}') FROM note_tags t WHERE t.note_id = notes.id) AS tags";
 
@@ -133,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const rows = await sql.query(
         `INSERT INTO notes (title, content, folder_id, user_id) VALUES ($1, '', $2, $3)
-         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, updated_at, created_at`,
+         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, updated_at, created_at`,
         [clean, folder, userId],
       );
       res.status(201).json({ ...rows[0], tags: [] });
@@ -141,17 +141,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'PATCH') {
-      const { id, title, pinned, archived, folder_id, favorite, sort_order, tags } = (req.body ??
-        {}) as {
-        id?: number;
-        title?: string;
-        pinned?: boolean;
-        archived?: boolean;
-        folder_id?: number | null;
-        favorite?: boolean;
-        sort_order?: number;
-        tags?: unknown;
-      };
+      const { id, title, pinned, archived, folder_id, favorite, sort_order, tags, due_at } =
+        (req.body ?? {}) as {
+          id?: number;
+          title?: string;
+          pinned?: boolean;
+          archived?: boolean;
+          folder_id?: number | null;
+          favorite?: boolean;
+          sort_order?: number;
+          tags?: unknown;
+          due_at?: unknown;
+        };
       if (typeof id !== 'number' || !Number.isInteger(id)) {
         res.status(400).json({ error: 'id must be an integer' });
         return;
@@ -166,7 +167,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(404).json({ error: 'Note not found' });
         return;
       }
-      // Org-only edits (folder/favorite/order/tags) must not move updated_at:
+      // due_at: null/'' clears, a valid ISO-8601 string sets, undefined keeps.
+      let dueSet = false;
+      let dueValue: string | null = null;
+      if (due_at !== undefined) {
+        if (due_at === null || due_at === '') {
+          dueSet = true;
+        } else if (typeof due_at === 'string') {
+          const parsed = new Date(due_at);
+          if (Number.isNaN(parsed.getTime())) {
+            res.status(400).json({ error: 'due_at must be a valid ISO-8601 date' });
+            return;
+          }
+          dueSet = true;
+          dueValue = parsed.toISOString();
+        } else {
+          res.status(400).json({ error: 'due_at must be a date string or null' });
+          return;
+        }
+      }
+      // Org-only edits (folder/favorite/order/tags/due) must not move updated_at:
       // the editor's conflict anchor compares it, and a bump without a content
       // change would manufacture a false 409 on the next autosave.
       // Cross-user ids → 404 (never 403, avoids an id oracle).
@@ -178,9 +198,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            folder_id = CASE WHEN $6 THEN $7 ELSE folder_id END,
            favorite = COALESCE($8, favorite),
            sort_order = COALESCE($9, sort_order),
+           due_at = CASE WHEN $10 THEN $11::timestamptz ELSE due_at END,
            updated_at = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL OR $5 IS NOT NULL THEN NOW() ELSE updated_at END
          WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, updated_at, created_at`,
+         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, updated_at, created_at`,
         [
           id,
           userId,
@@ -193,6 +214,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           typeof sort_order === 'number' && Number.isFinite(sort_order)
             ? Math.trunc(sort_order)
             : null,
+          dueSet,
+          dueValue,
         ],
       );
       if (rows.length === 0) {

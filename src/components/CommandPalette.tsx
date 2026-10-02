@@ -8,6 +8,7 @@ import {
   Files,
   Hash,
   History,
+  Home,
   Plus,
   Save,
   ScanEye,
@@ -26,6 +27,7 @@ import { Input } from './ui/input';
 interface CommandPaletteProps {
   onSelectNote: (id: number) => void;
   onOpenSettings: () => void;
+  onHome: () => void;
 }
 
 interface PaletteItem {
@@ -37,7 +39,7 @@ interface PaletteItem {
   run: () => void;
 }
 
-export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteProps) {
+export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: CommandPaletteProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -229,6 +231,16 @@ export function CommandPalette({ onSelectNote, onOpenSettings }: CommandPaletteP
 
     const actions: PaletteItem[] = (
       [
+        {
+          key: 'home',
+          label: 'Go home',
+          icon: Home,
+          run: () => {
+            close();
+            onHome();
+          },
+          match: match('go home dashboard overview stats'),
+        },
         {
           key: 'new-note',
           label: 'New note',

@@ -13,6 +13,8 @@ import noteHandler from './_route-note.js';
 import notesHandler from './_route-notes.js';
 import revisionsHandler from './_route-revisions.js';
 import sessionHandler from './_route-session.js';
+import shareHandler from './_route-share.js';
+import sharesHandler from './_route-shares.js';
 import tokenQuestionHandler from './_route-token-question.js';
 import tokensHandler from './_route-tokens.js';
 import uploadHandler from './_route-upload.js';
@@ -53,6 +55,8 @@ const HANDLERS: Record<string, Handler> = {
   notes: notesHandler,
   revisions: revisionsHandler,
   session: sessionHandler,
+  share: shareHandler,
+  shares: sharesHandler,
   'token-question': tokenQuestionHandler,
   tokens: tokensHandler,
   upload: uploadHandler,

@@ -34,6 +34,7 @@ export interface NotePayload {
   content_version: number;
   folder_id: number | null;
   favorite: boolean;
+  due_at?: string | null;
   updated_at: string;
   created_at: string;
   tags?: string[];
@@ -49,6 +50,7 @@ export interface NoteSummary {
   folder_id: number | null;
   favorite: boolean;
   sort_order?: number;
+  due_at?: string | null;
   updated_at: string;
   created_at: string;
   preview: string;
@@ -99,17 +101,24 @@ export interface DocumentMeta {
 }
 
 export interface AskSource {
-  document_id: number;
-  file_name: string;
+  /** Document citation (kind defaults to document for legacy responses). */
+  kind?: 'document' | 'note';
+  document_id?: number;
+  file_name?: string;
+  note_id?: number;
+  title?: string;
 }
+
+/** What /api/ask searched: documents (default), notes, or both. */
+export type AskScope = 'docs' | 'notes' | 'all';
 
 export interface AskResult {
   answer: string;
   sources: AskSource[];
   fallback?: boolean;
   warning?: string;
-  /** Retrieval mode: vector (full), keyword (DB extension missing), unavailable. */
-  mode?: 'vector' | 'keyword' | 'unavailable';
+  /** Retrieval mode: vector (full), keyword (DB extension missing), notes, unavailable. */
+  mode?: 'vector' | 'keyword' | 'notes' | 'unavailable';
 }
 
 /** One prior conversation turn sent to /api/ask for follow-up context. */
@@ -292,6 +301,8 @@ export function updateNote(
     favorite?: boolean;
     sort_order?: number;
     tags?: string[];
+    /** ISO-8601 sets the reminder, null clears it, undefined leaves it. */
+    due_at?: string | null;
   },
 ): Promise<NotePayload> {
   return request<NotePayload>('/api/notes', {
@@ -306,6 +317,77 @@ export function deleteNote(id: number, permanent = false): Promise<{ ok: true }>
     permanent ? `/api/notes?id=${id}&permanent=1` : `/api/notes?id=${id}`,
     { method: 'DELETE' },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Read-only share links: authed management + one-time public fetch.
+// ---------------------------------------------------------------------------
+
+export interface ShareLink {
+  id: string;
+  note_id: number;
+  note_title?: string;
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface MintedShare {
+  id: string;
+  note_id: number;
+  /** Plaintext token — returned once at mint, only sha256(token) is stored. */
+  token: string;
+  expires_at: string;
+}
+
+export function listShares(noteId?: number): Promise<ShareLink[]> {
+  return request<ShareLink[]>(noteId ? `/api/shares?note_id=${noteId}` : '/api/shares');
+}
+
+export function createShare(noteId: number, days: number): Promise<MintedShare> {
+  return request<MintedShare>('/api/shares', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note_id: noteId, days }),
+  });
+}
+
+export function revokeShare(id: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/shares?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export interface SharedNote {
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  tags: string[];
+}
+
+/** Public read of a shared note — no session cookie, no bridge headers. */
+export async function fetchSharedNote(token: string): Promise<SharedNote> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/share?t=${encodeURIComponent(token)}`, { cache: 'no-store' });
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+  if (res.status === 404) {
+    throw new ApiError(404, 'This share link is invalid, expired, or has been revoked');
+  }
+  if (res.status === 429) {
+    throw new ApiError(429, 'Too many attempts — try again in a minute');
+  }
+  if (!res.ok) {
+    const body = await readJson(res).catch(() => null);
+    throw new ApiError(res.status, errorFromBody(body, 'Could not load the shared note'));
+  }
+  return (await readJson(res)) as SharedNote;
+}
+
+/** Canonical share URL for the public viewer (`/s?t=…`). */
+export function shareUrl(token: string): string {
+  return `${window.location.origin}/s?t=${encodeURIComponent(token)}`;
 }
 
 export function listFolders(): Promise<Folder[]> {
@@ -339,14 +421,21 @@ export function getUsage(): Promise<UsageStats> {
   return request<UsageStats>('/api/usage');
 }
 
-export function askQuestion(question: string, history?: AskTurn[]): Promise<AskResult> {
+export function askQuestion(
+  question: string,
+  history?: AskTurn[],
+  scope?: AskScope,
+): Promise<AskResult> {
   // Mirror of the server's cap (last 12 messages) so the payload stays
   // bounded even in a long session; the server re-sanitizes regardless.
   const turns = history?.slice(-12) ?? [];
+  const body: Record<string, unknown> =
+    turns.length > 0 ? { question, history: turns } : { question };
+  if (scope) body.scope = scope;
   return request<AskResult>('/api/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(turns.length > 0 ? { question, history: turns } : { question }),
+    body: JSON.stringify(body),
   });
 }
 
