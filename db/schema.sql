@@ -187,3 +187,15 @@ CREATE TABLE IF NOT EXISTS share_links (
 );
 CREATE INDEX IF NOT EXISTS share_links_note_idx ON share_links (note_id);
 CREATE INDEX IF NOT EXISTS share_links_user_idx ON share_links (user_id);
+
+-- migrate-014-productivity: kanban status, due recurrence, reminder snooze
+-- (metadata only — never bumps updated_at).
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done'));
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS recurrence TEXT NOT NULL DEFAULT 'none' CHECK (recurrence IN ('none', 'daily', 'weekly', 'monthly'));
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP WITH TIME ZONE NULL;
+CREATE INDEX IF NOT EXISTS notes_status_idx
+  ON notes (status)
+  WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS notes_snoozed_idx
+  ON notes (snoozed_until)
+  WHERE snoozed_until IS NOT NULL AND deleted_at IS NULL;

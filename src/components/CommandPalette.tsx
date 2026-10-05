@@ -3,12 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import Fuse from 'fuse.js';
 import {
+  CalendarDays,
   Download,
   FileText,
   Files,
   Hash,
   History,
   Home,
+  LayoutGrid,
+  Link2,
   Plus,
   Save,
   ScanEye,
@@ -20,7 +23,7 @@ import {
 import { toast } from 'sonner';
 import { createNote, listDocuments, listNotesSorted, triggerBlobDownload } from '../lib/api';
 import { useFocusTrap } from '../lib/focus-trap';
-import { SHORTCUT_EVENTS } from '../lib/shortcuts';
+import { SHORTCUT_EVENTS, type HomeTab, type SideTab } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
 import { Input } from './ui/input';
 
@@ -90,10 +93,14 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
     setOpen(false);
   }
 
-  function goTab(tab: 'files' | 'ask') {
-    window.dispatchEvent(
-      new CustomEvent<'files' | 'ask'>(SHORTCUT_EVENTS.sideTab, { detail: tab }),
-    );
+  function goTab(tab: SideTab) {
+    close();
+    window.dispatchEvent(new CustomEvent<SideTab>(SHORTCUT_EVENTS.sideTab, { detail: tab }));
+  }
+
+  function goHomeTab(tab: HomeTab) {
+    close();
+    window.dispatchEvent(new CustomEvent<HomeTab>(SHORTCUT_EVENTS.openHomeTab, { detail: tab }));
   }
 
   function fire(event: string) {
@@ -268,6 +275,27 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
           icon: History,
           run: () => fire(SHORTCUT_EVENTS.toggleHistory),
           match: match('toggle version history'),
+        },
+        {
+          key: 'calendar',
+          label: 'Open calendar',
+          icon: CalendarDays,
+          run: () => goHomeTab('calendar'),
+          match: match('open calendar schedule month due dates plan'),
+        },
+        {
+          key: 'board',
+          label: 'Open board',
+          icon: LayoutGrid,
+          run: () => goHomeTab('board'),
+          match: match('open board kanban columns status tasks'),
+        },
+        {
+          key: 'links-tab',
+          label: 'Show backlinks',
+          icon: Link2,
+          run: () => goTab('links'),
+          match: match('backlinks links linked mentions wikilinks graph'),
         },
         {
           key: 'files-tab',

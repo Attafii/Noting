@@ -6,7 +6,8 @@ import { bodyTooLargeMessage, checkBodySize, MAX_NOTE_BYTES } from './_limits.js
 import { getSql } from '../src/lib/db.js';
 
 const NOTE_COLUMNS =
-  'id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, updated_at, created_at';
+  'id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, ' +
+  'status, recurrence, snoozed_until, updated_at, created_at';
 
 function parseId(value: unknown): number | null {
   const parsed =
@@ -157,7 +158,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            FROM current
            WHERE n.id = current.id
             RETURNING n.id, n.title, n.content, n.pinned, n.archived, n.enc,
-                      n.content_version, n.folder_id, n.favorite, n.due_at, n.updated_at, n.created_at
+                      n.content_version, n.folder_id, n.favorite, n.due_at,
+                      n.status, n.recurrence, n.snoozed_until, n.updated_at, n.created_at
           ), receipt AS (
             INSERT INTO note_mutations (user_id, mutation_id, note_id, applied_version)
             SELECT $2, $6, id, content_version FROM updated
@@ -165,7 +167,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             RETURNING mutation_id
           )
           SELECT id, title, content, pinned, archived, enc, content_version,
-                 folder_id, favorite, due_at, updated_at, created_at
+                 folder_id, favorite, due_at, status, recurrence, snoozed_until,
+                 updated_at, created_at
           FROM updated`,
         [noteId, userId, baseVersion, body.content, requestedEnc, requestedMutationId],
       );

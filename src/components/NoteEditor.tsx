@@ -35,11 +35,14 @@ import {
   updateNote,
   uploadFile,
   type NotePayload,
+  type NoteRecurrence,
   type NoteRevision,
   type NoteSummary,
 } from '../lib/api';
 import { countWords, timeAgo } from '../lib/format';
 import { dueFromInput, dueInputValue, dueLabel, dueTone } from '../lib/due';
+import { isRecurring, nextOccurrence, RECURRENCE_LABELS } from '../lib/recurrence';
+import { logWords } from '../lib/writing-log';
 import {
   SLASH_COMMANDS,
   applyHeading,
@@ -110,6 +113,10 @@ interface NoteEditorProps {
 
 type ViewMode = 'write' | 'preview' | 'split';
 
+function daysPlural(days: number): string {
+  return days === 1 ? 'a day' : `${days} days`;
+}
+
 export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: NoteEditorProps) {
   const queryClient = useQueryClient();
   const [text, setText] = useState('');
@@ -160,6 +167,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const conflictRef = useRef(conflict);
   /** Whether saves must store ciphertext (note is enc, or E2E just turned on). */
   const encRef = useRef(false);
+  /** Words already counted toward the local writing log for this session. */
+  const wordsLoggedRef = useRef(0);
 
   const noteQuery = useQuery({
     queryKey: ['note', noteId],
@@ -171,6 +180,11 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
 
   const noteMeta = notesQuery.data?.find((note) => note.id === noteId);
   const dueAt = noteMeta?.due_at ?? null;
+  const recurrence = noteMeta?.recurrence ?? 'none';
+  const snoozedUntil = noteMeta?.snoozed_until ?? null;
+  /** Precomputed next due when this note repeats (drives the Complete button). */
+  const recurringNextDue =
+    isRecurring(recurrence) && dueAt ? nextOccurrence(dueAt, recurrence) : null;
 
   // One popover at a time — stacked popovers read as a bug.
   function togglePopover(target: 'history' | 'toc' | 'export' | 'goal' | 'due') {
@@ -200,6 +214,55 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     onError: (err) => {
       if (err instanceof ApiError && err.code === 'UNAUTHORIZED') onUnauthorized();
       else toast.error(err instanceof Error ? err.message : 'Could not update the reminder');
+    },
+  });
+
+  // Repeat rule for the due date — metadata like due_at, never touches the
+  // conflict anchor.
+  const recurrenceMutate = useMutation({
+    mutationFn: (next: NoteRecurrence) => updateNote(noteId, { recurrence: next }),
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success(vars === 'none' ? 'Repeat removed' : `Repeats ${vars}`);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') onUnauthorized();
+      else toast.error(err instanceof Error ? err.message : 'Could not update the repeat rule');
+    },
+  });
+
+  // Snooze suppresses reminder notifications until the given moment.
+  const snoozeMutate = useMutation({
+    mutationFn: (days: number | null) =>
+      updateNote(noteId, {
+        snoozed_until:
+          days === null ? null : new Date(Date.now() + days * 86_400_000).toISOString(),
+      }),
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success(vars === null ? 'Snooze cleared' : `Snoozed for ${daysPlural(vars)}`);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') onUnauthorized();
+      else toast.error(err instanceof Error ? err.message : 'Could not update the snooze');
+    },
+  });
+
+  // Completing a recurring note: roll the due date to the next occurrence.
+  const completeRecurring = useMutation({
+    mutationFn: () => {
+      const next = nextOccurrence(dueAt, recurrence);
+      if (!next) throw new Error('This note does not repeat');
+      return updateNote(noteId, { due_at: next }).then(() => next);
+    },
+    onSuccess: (next) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast.success(`Completed — next due ${dueLabel(next).toLowerCase()}`);
+      setDueOpen(false);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'UNAUTHORIZED') onUnauthorized();
+      else toast.error(err instanceof Error ? err.message : 'Could not complete the note');
     },
   });
 
@@ -279,12 +342,16 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       workspaceIdRef.current = workspaceId;
       const serverText = decryptedQuery.data;
       const adopted = pending !== null && pending.content !== serverText;
+      const initialText = adopted && pending ? pending.content : serverText;
       setLoadState({
         anchor: noteQuery.data.updated_at ?? '',
         version: noteQuery.data.content_version ?? 1,
         restored: adopted,
       });
-      setText(adopted && pending ? pending.content : serverText);
+      setText(initialText);
+      // Establish the writing-log baseline so the first save of an old note
+      // only counts words actually added in this session.
+      wordsLoggedRef.current = countWords(initialText);
     })();
     return () => {
       cancelled = true;
@@ -347,6 +414,11 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       baseRef.current = data.updated_at;
       baseVersionRef.current = data.content_version ?? 1;
       setSaveState('saved', data.updated_at);
+      // Local writing log: count net words added this session (plaintext is
+      // what gets stored in the log — ciphertext never leaves the browser).
+      const savedWords = countWords(variables.content);
+      if (savedWords > wordsLoggedRef.current) logWords(savedWords - wordsLoggedRef.current);
+      wordsLoggedRef.current = savedWords;
       queryClient.setQueryData(['note', noteId], data);
       if (workspaceIdRef.current) {
         void removePending(workspaceIdRef.current, noteId);
@@ -1365,7 +1437,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 transition={{ duration: 0.16 }}
                 role="dialog"
                 aria-label="Reminder"
-                className="absolute right-3 bottom-14 z-20 w-64 max-w-[calc(100%-1.5rem)] rounded-xl border border-zinc-700/70 bg-zinc-900 p-3 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+                className="absolute right-3 bottom-14 z-20 max-h-[calc(100vh-8rem)] w-64 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl border border-zinc-700/70 bg-zinc-900 p-3 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
               >
                 <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
                   reminder
@@ -1393,10 +1465,74 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                     </Button>
                   )}
                 </div>
+
+                {/* Repeat rule. */}
+                <select
+                  value={recurrence}
+                  onChange={(event) => {
+                    const next = event.target.value as NoteRecurrence;
+                    if (next !== recurrence) recurrenceMutate.mutate(next);
+                  }}
+                  aria-label="Repeat rule"
+                  className="mt-2 w-full cursor-pointer rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-accent-600/60 focus:outline-none"
+                >
+                  {(Object.keys(RECURRENCE_LABELS) as NoteRecurrence[]).map((rule) => (
+                    <option key={rule} value={rule}>
+                      {RECURRENCE_LABELS[rule]}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Snooze state / controls. */}
+                {snoozedUntil ? (
+                  <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-zinc-800 bg-zinc-950/60 px-2 py-1">
+                    <span className="truncate font-mono text-[10px] text-zinc-500">
+                      snoozed until {dueLabel(snoozedUntil).toLowerCase()}
+                    </span>
+                    <Button size="sm" variant="ghost" onClick={() => snoozeMutate.mutate(null)}>
+                      Clear
+                    </Button>
+                  </div>
+                ) : (
+                  dueAt && (
+                    <div className="mt-2 flex gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="flex-1"
+                        onClick={() => snoozeMutate.mutate(1)}
+                      >
+                        Snooze 1d
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="flex-1"
+                        onClick={() => snoozeMutate.mutate(7)}
+                      >
+                        Snooze 7d
+                      </Button>
+                    </div>
+                  )
+                )}
+
+                {/* One-tap completion for repeating notes. */}
+                {recurringNextDue && (
+                  <Button
+                    size="sm"
+                    variant="accent"
+                    className="mt-2 w-full"
+                    disabled={completeRecurring.isPending}
+                    onClick={() => completeRecurring.mutate()}
+                  >
+                    <Check /> Complete · next {dueLabel(recurringNextDue).toLowerCase()}
+                  </Button>
+                )}
+
                 <p className="mt-2 font-mono text-[11px] text-zinc-500">
                   {dueAt
-                    ? `due ${dueLabel(dueAt).toLowerCase()} · shows on Home`
-                    : 'no reminder set · shows on Home when set'}
+                    ? `due ${dueLabel(dueAt).toLowerCase()} · Home, calendar & board`
+                    : 'no reminder set · Home, calendar & board when set'}
                 </p>
               </motion.div>
             )}

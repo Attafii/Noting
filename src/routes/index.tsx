@@ -4,9 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowRight,
+  Bell,
+  BellRing,
   CalendarClock,
+  CalendarDays,
   Command,
   Files,
+  Flame,
+  LayoutGrid,
   PanelLeft,
   Plus,
   Sparkles,
@@ -19,6 +24,9 @@ import NoteEditor from '../components/NoteEditor';
 import { CommandPalette } from '../components/CommandPalette';
 import { NotesSidebar } from '../components/NotesSidebar';
 import { OnboardingTour } from '../components/OnboardingTour';
+import { CalendarView } from '../components/planner/CalendarView';
+import { KanbanView } from '../components/planner/KanbanView';
+import { ReminderNotifier } from '../components/ReminderNotifier';
 import { SidePanel } from '../components/SidePanel';
 import { TokenGate } from '../components/TokenGate';
 import { TopBar } from '../components/TopBar';
@@ -28,10 +36,26 @@ import { createNote, endSession, getUsage, listNotes, saveNote } from '../lib/ap
 import { encryptText } from '../lib/crypto';
 import { useE2E, getCryptoKey } from '../lib/e2e';
 import { dueLabel, dueTone } from '../lib/due';
+import {
+  NOTIFY_PREF_EVENT,
+  getNotifyEnabled,
+  notificationPermission,
+  notificationsSupported,
+  requestNotificationPermission,
+  setNotifyEnabled,
+} from '../lib/notify';
 import { clearPendingMemory } from '../lib/outbox';
 import { clearToken, getAnswer, getToken } from '../lib/token';
-import { SHORTCUT_EVENTS, useGlobalShortcuts } from '../lib/shortcuts';
+import { SHORTCUT_EVENTS, useGlobalShortcuts, type HomeTab, type SideTab } from '../lib/shortcuts';
 import { formatBytes, timeAgo } from '../lib/format';
+import {
+  WRITING_LOG_EVENT,
+  getDailyGoal,
+  getWritingLog,
+  setDailyGoal,
+  wordsToday,
+  writingStreak,
+} from '../lib/writing-log';
 import { cn } from '../lib/utils';
 
 export const Route = createFileRoute('/')({
@@ -211,7 +235,38 @@ function AuthedWorkspace({
 }) {
   const queryClient = useQueryClient();
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
-  const [sideTab, setSideTab] = useState<'files' | 'ask'>('files');
+  const [sideTab, setSideTab] = useState<SideTab>('files');
+  // Home tabs: overview dashboard, month calendar, or kanban board. Persisted
+  // so the workspace reopens on the view you left it on.
+  const [homeTab, setHomeTab] = useState<HomeTab>(() => {
+    try {
+      const raw = localStorage.getItem('home-tab');
+      return raw === 'calendar' || raw === 'board' ? raw : 'overview';
+    } catch {
+      return 'overview';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('home-tab', homeTab);
+    } catch {
+      /* ignore */
+    }
+  }, [homeTab]);
+
+  // Command palette (and future callers) can jump straight to a home tab —
+  // which also leaves any open note behind.
+  useEffect(() => {
+    const go = (event: Event) => {
+      const detail = (event as CustomEvent<HomeTab>).detail;
+      if (detail !== 'overview' && detail !== 'calendar' && detail !== 'board') return;
+      setHomeTab(detail);
+      onHome();
+    };
+    window.addEventListener(SHORTCUT_EVENTS.openHomeTab, go);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.openHomeTab, go);
+  }, [onHome]);
   const [sideW, setSideW] = useState(() => {
     try {
       const stored = parseInt(localStorage.getItem('layout-side-w') ?? '', 10);
@@ -295,6 +350,8 @@ function AuthedWorkspace({
     <>
       <CommandPalette onSelectNote={onSelect} onOpenSettings={onOpenSettings} onHome={onHome} />
       <OnboardingTour />
+      <ReminderNotifier notes={notesQuery.data ?? []} onOpenNote={onSelect} />
+      <OnboardingTour />
       <main
         className={cn(
           'mx-auto grid max-w-7xl grid-cols-1 items-start gap-5 px-4 pt-6 pb-24 sm:px-6 lg:gap-6 lg:pb-8',
@@ -352,6 +409,8 @@ function AuthedWorkspace({
               onUnauthorized={onUnauthorized}
               notesQuery={notesQuery}
               queryClient={queryClient}
+              homeTab={homeTab}
+              onTabChange={setHomeTab}
             />
           )}
         </motion.section>
@@ -367,6 +426,7 @@ function AuthedWorkspace({
             onUnauthorized={onUnauthorized}
             onTabChange={setSideTab}
             onOpenNote={onSelect}
+            noteId={selectedId}
           />
         </motion.section>
       </main>
@@ -487,6 +547,8 @@ function HomeDashboard({
   onUnauthorized,
   notesQuery,
   queryClient,
+  homeTab,
+  onTabChange,
 }: {
   onSelect: (id: number) => void;
   onUnauthorized: () => void;
@@ -494,6 +556,8 @@ function HomeDashboard({
     typeof useQuery<typeof listNotes extends () => Promise<infer T> ? T : never>
   >;
   queryClient: ReturnType<typeof useQueryClient>;
+  homeTab: HomeTab;
+  onTabChange: (tab: HomeTab) => void;
 }) {
   const e2e = useE2E();
   const [creating, setCreating] = useState(false);
@@ -578,7 +642,7 @@ function HomeDashboard({
 
   return (
     <Card className="flex min-h-[480px] flex-col gap-5 p-6">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400">
           <StickyNote className="size-4" />
         </span>
@@ -591,171 +655,365 @@ function HomeDashboard({
             {dueSoon.length > 0 && ` · ${dueSoon.length} due`}
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="accent"
-          className="ml-auto"
-          disabled={creating}
-          onClick={() => void handleNew()}
-        >
-          <Plus /> New note
-        </Button>
-      </div>
-
-      {/* Quick capture — first line is the title, the rest the body. */}
-      <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-            quick capture
-          </p>
-          <p className="font-mono text-[10px] text-zinc-600">Enter saves · first line = title</p>
-        </div>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
-          <textarea
-            rows={2}
-            value={capture}
-            onChange={(e) => setCapture(e.target.value)}
-            onKeyDown={onCaptureKeyDown}
-            placeholder="Jot it down — title, then details…"
-            aria-label="Quick capture a note"
-            className="min-h-[62px] w-full resize-none rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-accent-600/60 focus:outline-none"
-          />
-          <Button
-            variant="accent"
-            size="sm"
-            disabled={creating || !capture.trim()}
-            onClick={() => void handleCapture()}
-            className="sm:mb-0.5"
-          >
-            <Plus /> Capture
-          </Button>
-        </div>
-      </div>
-
-      {/* Due soon / overdue reminders. */}
-      {dueSoon.length > 0 && (
-        <div>
-          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-            due soon
-          </p>
-          <div className="mt-2 flex flex-col gap-1">
-            {dueSoon.map((note) => (
-              <button
-                key={note.id}
-                onClick={() => onSelect(note.id)}
-                className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
-              >
-                <span className="flex min-w-0 items-center gap-2.5">
-                  <span
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]',
-                      DUE_BADGE[dueTone(note.due_at, now)],
-                    )}
-                  >
-                    <CalendarClock className="size-3" />
-                    {dueLabel(String(note.due_at), now)}
-                  </span>
-                  <span className="min-w-0 truncate text-[13px] font-medium text-zinc-200">
-                    {note.title}
-                  </span>
-                </span>
-                <ArrowRight className="size-3.5 shrink-0 text-zinc-700 transition-transform group-hover:translate-x-0.5 group-hover:text-zinc-400" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Favorites chips. */}
-      {favorites.length > 0 && (
-        <div>
-          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-            favorites
-          </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {favorites.slice(0, 8).map((note) => (
-              <button
-                key={note.id}
-                onClick={() => onSelect(note.id)}
-                className="flex max-w-[14rem] cursor-pointer items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
-              >
-                <Star className="size-3 shrink-0 fill-amber-400/80 text-amber-400/80" />
-                <span className="truncate">{note.title}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {recent.length > 0 ? (
-        <div>
-          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-            Continue where you left off
-          </p>
-          <div className="mt-2 flex flex-col gap-1">
-            {recent.map((note) => (
-              <button
-                key={note.id}
-                onClick={() => onSelect(note.id)}
-                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-medium text-zinc-200">
-                    {note.title}
-                  </span>
-                  <span className="block truncate font-mono text-[11px] text-zinc-600">
-                    {(note.preview ?? '').replace(/\s+/g, ' ').slice(0, 70) || 'Empty note'}
-                  </span>
-                </span>
-                <span className="shrink-0 font-mono text-[11px] text-zinc-600">
-                  {timeAgo(note.updated_at)}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
-          <div>
-            <p className="text-sm text-zinc-300">A blank page, no noise.</p>
-            <p className="mx-auto mt-1 max-w-xs text-xs text-zinc-500">
-              Capture something above, press Ctrl+K to jump anywhere, and paste images straight into
-              the editor — they land in Files automatically.
-            </p>
-          </div>
+        <div className="ml-auto flex items-center gap-2">
+          <RemindersBell />
           <Button size="sm" variant="accent" disabled={creating} onClick={() => void handleNew()}>
-            <Plus /> Create your first note
+            <Plus /> New note
           </Button>
         </div>
+      </div>
+
+      {/* View switcher: overview dashboard, month calendar, or kanban board. */}
+      <div
+        role="tablist"
+        aria-label="Home view"
+        className="flex self-start rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5"
+      >
+        <HomeTabButton
+          active={homeTab === 'overview'}
+          onClick={() => onTabChange('overview')}
+          icon={<StickyNote className="size-3.5" />}
+          label="Overview"
+        />
+        <HomeTabButton
+          active={homeTab === 'calendar'}
+          onClick={() => onTabChange('calendar')}
+          icon={<CalendarDays className="size-3.5" />}
+          label="Calendar"
+        />
+        <HomeTabButton
+          active={homeTab === 'board'}
+          onClick={() => onTabChange('board')}
+          icon={<LayoutGrid className="size-3.5" />}
+          label="Board"
+        />
+      </div>
+
+      {homeTab === 'calendar' && (
+        <CalendarView notes={notes} onSelect={onSelect} onUnauthorized={onUnauthorized} />
+      )}
+      {homeTab === 'board' && (
+        <KanbanView notes={notes} onSelect={onSelect} onUnauthorized={onUnauthorized} />
       )}
 
-      {/* Workspace stats. */}
-      <div className="grid grid-cols-2 gap-2 border-t border-zinc-800/70 pt-4 sm:grid-cols-4">
-        {stats.map((s) => (
-          <div
-            key={s.k}
-            className="rounded-lg bg-zinc-900/50 px-2 py-2.5 text-center"
-            title={s.title}
-          >
-            <p className="font-mono text-[13px] text-zinc-200">{s.v}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-500">{s.k}</p>
+      {homeTab === 'overview' && (
+        <>
+          {/* Quick capture — first line is the title, the rest the body. */}
+          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                quick capture
+              </p>
+              <p className="font-mono text-[10px] text-zinc-600">
+                Enter saves · first line = title
+              </p>
+            </div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
+              <textarea
+                rows={2}
+                value={capture}
+                onChange={(e) => setCapture(e.target.value)}
+                onKeyDown={onCaptureKeyDown}
+                placeholder="Jot it down — title, then details…"
+                aria-label="Quick capture a note"
+                className="min-h-[62px] w-full resize-none rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-accent-600/60 focus:outline-none"
+              />
+              <Button
+                variant="accent"
+                size="sm"
+                disabled={creating || !capture.trim()}
+                onClick={() => void handleCapture()}
+                className="sm:mb-0.5"
+              >
+                <Plus /> Capture
+              </Button>
+            </div>
           </div>
-        ))}
-      </div>
 
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[
-          { k: 'Ctrl K', v: 'Jump anywhere' },
-          { k: '/ + Enter', v: 'Slash commands' },
-          { k: 'Ctrl S', v: 'Save right now' },
-        ].map((s) => (
-          <div key={s.k} className="rounded-lg bg-zinc-900/50 px-2 py-2.5">
-            <p className="font-mono text-[11px] text-zinc-200">{s.k}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-500">{s.v}</p>
+          {/* Due soon / overdue reminders. */}
+          {dueSoon.length > 0 && (
+            <div>
+              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                due soon
+              </p>
+              <div className="mt-2 flex flex-col gap-1">
+                {dueSoon.map((note) => (
+                  <button
+                    key={note.id}
+                    onClick={() => onSelect(note.id)}
+                    className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]',
+                          DUE_BADGE[dueTone(note.due_at, now)],
+                        )}
+                      >
+                        <CalendarClock className="size-3" />
+                        {dueLabel(String(note.due_at), now)}
+                      </span>
+                      <span className="min-w-0 truncate text-[13px] font-medium text-zinc-200">
+                        {note.title}
+                      </span>
+                    </span>
+                    <ArrowRight className="size-3.5 shrink-0 text-zinc-700 transition-transform group-hover:translate-x-0.5 group-hover:text-zinc-400" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Favorites chips. */}
+          {favorites.length > 0 && (
+            <div>
+              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                favorites
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {favorites.slice(0, 8).map((note) => (
+                  <button
+                    key={note.id}
+                    onClick={() => onSelect(note.id)}
+                    className="flex max-w-[14rem] cursor-pointer items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
+                  >
+                    <Star className="size-3 shrink-0 fill-amber-400/80 text-amber-400/80" />
+                    <span className="truncate">{note.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Writing pulse: words today, streak, and the daily goal. */}
+          <WritingCard />
+
+          {recent.length > 0 ? (
+            <div>
+              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                Continue where you left off
+              </p>
+              <div className="mt-2 flex flex-col gap-1">
+                {recent.map((note) => (
+                  <button
+                    key={note.id}
+                    onClick={() => onSelect(note.id)}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-medium text-zinc-200">
+                        {note.title}
+                      </span>
+                      <span className="block truncate font-mono text-[11px] text-zinc-600">
+                        {(note.preview ?? '').replace(/\s+/g, ' ').slice(0, 70) || 'Empty note'}
+                      </span>
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] text-zinc-600">
+                      {timeAgo(note.updated_at)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <div>
+                <p className="text-sm text-zinc-300">A blank page, no noise.</p>
+                <p className="mx-auto mt-1 max-w-xs text-xs text-zinc-500">
+                  Capture something above, press Ctrl+K to jump anywhere, and paste images straight
+                  into the editor — they land in Files automatically.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="accent"
+                disabled={creating}
+                onClick={() => void handleNew()}
+              >
+                <Plus /> Create your first note
+              </Button>
+            </div>
+          )}
+
+          {/* Workspace stats. */}
+          <div className="grid grid-cols-2 gap-2 border-t border-zinc-800/70 pt-4 sm:grid-cols-4">
+            {stats.map((s) => (
+              <div
+                key={s.k}
+                className="rounded-lg bg-zinc-900/50 px-2 py-2.5 text-center"
+                title={s.title}
+              >
+                <p className="font-mono text-[13px] text-zinc-200">{s.v}</p>
+                <p className="mt-0.5 text-[11px] text-zinc-500">{s.k}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            {[
+              { k: 'Ctrl K', v: 'Jump anywhere' },
+              { k: '/ + Enter', v: 'Slash commands' },
+              { k: 'Ctrl S', v: 'Save right now' },
+            ].map((s) => (
+              <div key={s.k} className="rounded-lg bg-zinc-900/50 px-2 py-2.5">
+                <p className="font-mono text-[11px] text-zinc-200">{s.k}</p>
+                <p className="mt-0.5 text-[11px] text-zinc-500">{s.v}</p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </Card>
+  );
+}
+
+/** Segmented tab button used by the Home view switcher. */
+function HomeTabButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all duration-200',
+        active ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300',
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/** Bell toggle: system notifications when granted, in-app alerts otherwise. */
+function RemindersBell() {
+  const [supported] = useState(() => notificationsSupported());
+  const [permission, setPermission] = useState(() => notificationPermission());
+  const [enabled, setEnabled] = useState(() => getNotifyEnabled());
+
+  if (!supported) return null;
+
+  function toggle() {
+    if (enabled) {
+      setNotifyEnabled(false);
+      setEnabled(false);
+      window.dispatchEvent(new Event(NOTIFY_PREF_EVENT));
+      toast.info('Reminders paused');
+      return;
+    }
+    void requestNotificationPermission().then((result) => {
+      setPermission(result);
+      setNotifyEnabled(true);
+      setEnabled(true);
+      window.dispatchEvent(new Event(NOTIFY_PREF_EVENT));
+      if (result === 'granted') toast.success('Reminders on — due notes will notify you');
+      else toast.info('Reminders on — you’ll get in-app alerts instead of pop-ups');
+    });
+  }
+
+  const active = enabled && permission === 'granted';
+  return (
+    <Button
+      size="icon-sm"
+      variant="ghost"
+      onClick={toggle}
+      aria-pressed={enabled}
+      aria-label={enabled ? 'Pause due-note reminders' : 'Enable due-note reminders'}
+      title={
+        enabled
+          ? 'Reminders on — click to pause'
+          : 'Notify me when notes come due (browser pop-up when available)'
+      }
+    >
+      {active ? <BellRing className="text-accent-300" /> : <Bell />}
+    </Button>
+  );
+}
+
+/** Words written today, current streak, and progress toward the daily goal. */
+function WritingCard() {
+  const [log, setLog] = useState(() => getWritingLog());
+  const [goal, setGoal] = useState(() => getDailyGoal());
+
+  useEffect(() => {
+    const refresh = () => setLog(getWritingLog());
+    window.addEventListener(WRITING_LOG_EVENT, refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener(WRITING_LOG_EVENT, refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  const today = wordsToday(log);
+  const streak = writingStreak(log);
+  const pct = goal > 0 ? Math.min(100, Math.round((today / goal) * 100)) : 0;
+
+  function onGoalChange(value: string) {
+    const next = value === '' ? 0 : Math.max(0, Math.min(100_000, parseInt(value, 10) || 0));
+    setGoal(next);
+    setDailyGoal(next);
+  }
+
+  return (
+    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">writing</p>
+        <label className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-600">
+          daily goal
+          <input
+            type="number"
+            min={0}
+            max={100000}
+            value={goal || ''}
+            onChange={(event) => onGoalChange(event.target.value)}
+            placeholder="300"
+            aria-label="Daily word goal"
+            className="w-16 rounded-md border border-zinc-800 bg-zinc-950 px-1.5 py-0.5 text-right text-[11px] text-zinc-300 focus:border-accent-600/60 focus:outline-none"
+          />
+        </label>
+      </div>
+      <div className="mt-2 flex items-end gap-5">
+        <div>
+          <p className="font-mono text-lg leading-none text-zinc-100">{today}</p>
+          <p className="mt-1 text-[11px] text-zinc-500">words today</p>
+        </div>
+        <div>
+          <p className="flex items-center gap-1 font-mono text-lg leading-none text-zinc-100">
+            <Flame className={cn('size-4', streak > 0 ? 'text-accent-400' : 'text-zinc-700')} />
+            {streak}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500">day streak</p>
+        </div>
+        <div className="ml-auto text-right">
+          <p className="font-mono text-lg leading-none text-zinc-100">
+            {goal > 0 ? `${pct}%` : '—'}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500">of goal</p>
+        </div>
+      </div>
+      {goal > 0 && (
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all duration-500',
+              today >= goal ? 'bg-emerald-400' : 'bg-accent-500',
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

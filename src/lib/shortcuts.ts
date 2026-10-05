@@ -14,7 +14,14 @@ export const SHORTCUT_EVENTS = {
   openPalette: 'noting:open-palette',
   sideTab: 'noting:side-tab',
   filterTag: 'noting:filter-tag',
+  openHomeTab: 'noting:open-home-tab',
 } as const;
+
+/** Home dashboard tabs: overview, calendar, or kanban board. */
+export type HomeTab = 'overview' | 'calendar' | 'board';
+
+/** Side panel tabs: files, ask, or the wikilink graph. */
+export type SideTab = 'files' | 'ask' | 'links';
 
 export interface ShortcutBinding {
   /** Require Ctrl/Cmd. */

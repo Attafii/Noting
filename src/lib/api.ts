@@ -24,6 +24,12 @@ export class ApiError extends Error {
   }
 }
 
+/** Kanban board column for a note. */
+export type NoteStatus = 'todo' | 'doing' | 'done';
+
+/** When a note's due date should roll over after completion. */
+export type NoteRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
+
 export interface NotePayload {
   id: number;
   title: string;
@@ -35,6 +41,9 @@ export interface NotePayload {
   folder_id: number | null;
   favorite: boolean;
   due_at?: string | null;
+  status?: NoteStatus;
+  recurrence?: NoteRecurrence;
+  snoozed_until?: string | null;
   updated_at: string;
   created_at: string;
   tags?: string[];
@@ -51,6 +60,9 @@ export interface NoteSummary {
   favorite: boolean;
   sort_order?: number;
   due_at?: string | null;
+  status?: NoteStatus;
+  recurrence?: NoteRecurrence;
+  snoozed_until?: string | null;
   updated_at: string;
   created_at: string;
   preview: string;
@@ -303,6 +315,12 @@ export function updateNote(
     tags?: string[];
     /** ISO-8601 sets the reminder, null clears it, undefined leaves it. */
     due_at?: string | null;
+    /** Kanban column: todo / doing / done. */
+    status?: NoteStatus;
+    /** Due-date rollover rule after completion. */
+    recurrence?: NoteRecurrence;
+    /** ISO-8601 suppresses reminder notifications until then, null clears. */
+    snoozed_until?: string | null;
   },
 ): Promise<NotePayload> {
   return request<NotePayload>('/api/notes', {

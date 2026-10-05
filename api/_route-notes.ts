@@ -7,9 +7,15 @@ import type { NeonQueryFunction } from '@neondatabase/serverless';
 
 const LIST_COLUMNS =
   'notes.id, notes.title, notes.pinned, notes.archived, notes.enc, notes.content_version, notes.folder_id, notes.favorite, ' +
-  'notes.sort_order, notes.due_at, notes.updated_at, notes.created_at, LEFT(notes.content, 160) AS preview, ' +
+  'notes.sort_order, notes.due_at, notes.status, notes.recurrence, notes.snoozed_until, notes.updated_at, notes.created_at, LEFT(notes.content, 160) AS preview, ' +
   'CASE WHEN notes.enc = FALSE THEN LEFT(notes.content, 4000) ELSE NULL END AS search_text, ' +
   "(SELECT COALESCE(array_agg(t.tag), '{}') FROM note_tags t WHERE t.note_id = notes.id) AS tags";
+
+const RETURNING_COLUMNS =
+  'id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, status, recurrence, snoozed_until, updated_at, created_at';
+
+const VALID_STATUS = new Set(['todo', 'doing', 'done']);
+const VALID_RECURRENCE = new Set(['none', 'daily', 'weekly', 'monthly']);
 
 type SortKey = 'updated' | 'created' | 'alpha' | 'manual';
 
@@ -133,7 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const rows = await sql.query(
         `INSERT INTO notes (title, content, folder_id, user_id) VALUES ($1, '', $2, $3)
-         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, updated_at, created_at`,
+         RETURNING ${RETURNING_COLUMNS}`,
         [clean, folder, userId],
       );
       res.status(201).json({ ...rows[0], tags: [] });
@@ -141,18 +147,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'PATCH') {
-      const { id, title, pinned, archived, folder_id, favorite, sort_order, tags, due_at } =
-        (req.body ?? {}) as {
-          id?: number;
-          title?: string;
-          pinned?: boolean;
-          archived?: boolean;
-          folder_id?: number | null;
-          favorite?: boolean;
-          sort_order?: number;
-          tags?: unknown;
-          due_at?: unknown;
-        };
+      const {
+        id,
+        title,
+        pinned,
+        archived,
+        folder_id,
+        favorite,
+        sort_order,
+        tags,
+        due_at,
+        status,
+        recurrence,
+        snoozed_until,
+      } = (req.body ?? {}) as {
+        id?: number;
+        title?: string;
+        pinned?: boolean;
+        archived?: boolean;
+        folder_id?: number | null;
+        favorite?: boolean;
+        sort_order?: number;
+        tags?: unknown;
+        due_at?: unknown;
+        status?: unknown;
+        recurrence?: unknown;
+        snoozed_until?: unknown;
+      };
       if (typeof id !== 'number' || !Number.isInteger(id)) {
         res.status(400).json({ error: 'id must be an integer' });
         return;
@@ -186,9 +207,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return;
         }
       }
-      // Org-only edits (folder/favorite/order/tags/due) must not move updated_at:
-      // the editor's conflict anchor compares it, and a bump without a content
-      // change would manufacture a false 409 on the next autosave.
+      // Board status: a known enum value or null (keeps the current one).
+      let statusSet = false;
+      let statusValue: string | null = null;
+      if (status !== undefined && status !== null) {
+        if (typeof status !== 'string' || !VALID_STATUS.has(status)) {
+          res.status(400).json({ error: 'status must be todo, doing, or done' });
+          return;
+        }
+        statusSet = true;
+        statusValue = status;
+      }
+      // Recurrence rule for due-date rollovers.
+      let recurrenceSet = false;
+      let recurrenceValue: string | null = null;
+      if (recurrence !== undefined && recurrence !== null) {
+        if (typeof recurrence !== 'string' || !VALID_RECURRENCE.has(recurrence)) {
+          res.status(400).json({ error: 'recurrence must be none, daily, weekly, or monthly' });
+          return;
+        }
+        recurrenceSet = true;
+        recurrenceValue = recurrence;
+      }
+      // snoozed_until: null/'' clears, ISO string sets (suppresses reminders).
+      let snoozeSet = false;
+      let snoozeValue: string | null = null;
+      if (snoozed_until !== undefined) {
+        if (snoozed_until === null || snoozed_until === '') {
+          snoozeSet = true;
+        } else if (typeof snoozed_until === 'string') {
+          const parsed = new Date(snoozed_until);
+          if (Number.isNaN(parsed.getTime())) {
+            res.status(400).json({ error: 'snoozed_until must be a valid ISO-8601 date' });
+            return;
+          }
+          snoozeSet = true;
+          snoozeValue = parsed.toISOString();
+        } else {
+          res.status(400).json({ error: 'snoozed_until must be a date string or null' });
+          return;
+        }
+      }
+      // Org-only edits (folder/favorite/order/tags/due/status/recurrence/snooze)
+      // must not move updated_at: the editor's conflict anchor compares it, and
+      // a bump without a content change would manufacture a false 409 on the
+      // next autosave.
       // Cross-user ids → 404 (never 403, avoids an id oracle).
       const rows = await sql.query(
         `UPDATE notes SET
@@ -199,9 +262,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            favorite = COALESCE($8, favorite),
            sort_order = COALESCE($9, sort_order),
            due_at = CASE WHEN $10 THEN $11::timestamptz ELSE due_at END,
+           status = CASE WHEN $12 THEN $13::text ELSE status END,
+           recurrence = CASE WHEN $14 THEN $15::text ELSE recurrence END,
+           snoozed_until = CASE WHEN $16 THEN $17::timestamptz ELSE snoozed_until END,
            updated_at = CASE WHEN $3 IS NOT NULL OR $4 IS NOT NULL OR $5 IS NOT NULL THEN NOW() ELSE updated_at END
          WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-         RETURNING id, title, content, pinned, archived, enc, content_version, folder_id, favorite, due_at, updated_at, created_at`,
+         RETURNING ${RETURNING_COLUMNS}`,
         [
           id,
           userId,
@@ -216,6 +282,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             : null,
           dueSet,
           dueValue,
+          statusSet,
+          statusValue,
+          recurrenceSet,
+          recurrenceValue,
+          snoozeSet,
+          snoozeValue,
         ],
       );
       if (rows.length === 0) {

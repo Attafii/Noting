@@ -1,22 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Files, Sparkles } from 'lucide-react';
+import { Files, Link2, Sparkles } from 'lucide-react';
 import { AskPanel } from './AskPanel';
+import { BacklinksPanel } from './BacklinksPanel';
 import DocumentList from './DocumentList';
 import FileDropzone from './FileDropzone';
-import { SHORTCUT_EVENTS } from '../lib/shortcuts';
+import { SHORTCUT_EVENTS, type SideTab } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
 
 interface SidePanelProps {
   onUnauthorized: () => void;
-  onTabChange?: (tab: 'files' | 'ask') => void;
+  onTabChange?: (tab: SideTab) => void;
   onOpenNote?: (noteId: number) => void;
+  /** Currently open note — drives the Links (wikilink graph) tab. */
+  noteId?: number | null;
 }
 
-export function SidePanel({ onUnauthorized, onTabChange, onOpenNote }: SidePanelProps) {
-  const [tab, setTab] = useState<'files' | 'ask'>('files');
+export function SidePanel({ onUnauthorized, onTabChange, onOpenNote, noteId }: SidePanelProps) {
+  const [tab, setTab] = useState<SideTab>('files');
 
   const selectTab = useCallback(
-    (next: 'files' | 'ask') => {
+    (next: SideTab) => {
       setTab(next);
       onTabChange?.(next);
     },
@@ -26,8 +29,8 @@ export function SidePanel({ onUnauthorized, onTabChange, onOpenNote }: SidePanel
   // External tab requests (e.g. command palette "Go to Ask").
   useEffect(() => {
     const go = (event: Event) => {
-      const next = (event as CustomEvent<'files' | 'ask'>).detail;
-      if (next === 'files' || next === 'ask') selectTab(next);
+      const next = (event as CustomEvent<SideTab>).detail;
+      if (next === 'files' || next === 'ask' || next === 'links') selectTab(next);
     };
     window.addEventListener(SHORTCUT_EVENTS.sideTab, go);
     return () => window.removeEventListener(SHORTCUT_EVENTS.sideTab, go);
@@ -62,6 +65,12 @@ export function SidePanel({ onUnauthorized, onTabChange, onOpenNote }: SidePanel
           icon={<Sparkles className="size-3.5" />}
           label="Ask"
         />
+        <SideTab
+          active={tab === 'links'}
+          onClick={() => selectTab('links')}
+          icon={<Link2 className="size-3.5" />}
+          label="Links"
+        />
       </div>
 
       <div className={cn('flex min-h-0 flex-col gap-4', tab !== 'files' && 'hidden')}>
@@ -73,6 +82,13 @@ export function SidePanel({ onUnauthorized, onTabChange, onOpenNote }: SidePanel
           onUnauthorized={onUnauthorized}
           onOpenDocument={handleOpenDocument}
           onOpenNote={onOpenNote}
+        />
+      </div>
+      <div className={cn('flex min-h-0 flex-col', tab !== 'links' && 'hidden')}>
+        <BacklinksPanel
+          noteId={noteId ?? null}
+          onOpenNote={onOpenNote ?? (() => undefined)}
+          onUnauthorized={onUnauthorized}
         />
       </div>
     </div>
