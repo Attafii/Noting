@@ -1,9 +1,10 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans:
+    'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono:
-    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    'JetBrains Mono Variable', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Restrained warm accent for primary actions in the stealth-luxe theme. */
   --color-accent-300: #e7c47c;
@@ -14,6 +15,14 @@
 
 html {
   color-scheme: dark;
+}
+
+/* Motion tokens — one two-tier system (fast/mid) and a single ease-out,
+   mirrored by every inline Framer transition in the app. */
+:root {
+  --motion-fast: 150ms;
+  --motion-med: 250ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 body {
@@ -70,7 +79,7 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .hover-reveal {
     opacity: 0;
-    transition: opacity 150ms ease;
+    transition: opacity var(--motion-fast) var(--motion-ease);
   }
   .group:hover .hover-reveal,
   .group:focus-within .hover-reveal,

@@ -9,12 +9,10 @@ import {
   CalendarClock,
   CalendarDays,
   Command,
-  Files,
   Flame,
   LayoutGrid,
   PanelLeft,
   Plus,
-  Sparkles,
   Star,
   StickyNote,
   X,
@@ -22,7 +20,7 @@ import {
 import { toast } from 'sonner';
 import NoteEditor from '../components/NoteEditor';
 import { CommandPalette } from '../components/CommandPalette';
-import { NotesSidebar } from '../components/NotesSidebar';
+import { CollapsibleRow, NotesSidebar } from '../components/NotesSidebar';
 import { OnboardingTour } from '../components/OnboardingTour';
 import { CalendarView } from '../components/planner/CalendarView';
 import { KanbanView } from '../components/planner/KanbanView';
@@ -32,7 +30,7 @@ import { TokenGate } from '../components/TokenGate';
 import { TopBar } from '../components/TopBar';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { createNote, endSession, getUsage, listNotes, saveNote } from '../lib/api';
+import { createNote, endSession, listNotes, saveNote } from '../lib/api';
 import { encryptText } from '../lib/crypto';
 import { useE2E, getCryptoKey } from '../lib/e2e';
 import { dueLabel, dueTone } from '../lib/due';
@@ -47,7 +45,7 @@ import {
 import { clearPendingMemory } from '../lib/outbox';
 import { clearToken, getAnswer, getToken } from '../lib/token';
 import { SHORTCUT_EVENTS, useGlobalShortcuts, type HomeTab, type SideTab } from '../lib/shortcuts';
-import { formatBytes, timeAgo } from '../lib/format';
+import { timeAgo } from '../lib/format';
 import {
   WRITING_LOG_EVENT,
   getDailyGoal,
@@ -118,6 +116,14 @@ function IndexComponent() {
     } else {
       setSidebarOpen(true);
     }
+  }, []);
+
+  // `/` must always reach the notes search — reveal a collapsed sidebar first
+  // so the field is on screen when the shortcut fires.
+  useEffect(() => {
+    const reveal = () => setSideCollapsed(false);
+    window.addEventListener(SHORTCUT_EVENTS.focusSearch, reveal);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, reveal);
   }, []);
 
   const handleUnauthorized = useCallback(() => {
@@ -235,7 +241,6 @@ function AuthedWorkspace({
 }) {
   const queryClient = useQueryClient();
   const notesQuery = useQuery({ queryKey: ['notes'], queryFn: listNotes, retry: false });
-  const [sideTab, setSideTab] = useState<SideTab>('files');
   // Home tabs: overview dashboard, month calendar, or kanban board. Persisted
   // so the workspace reopens on the view you left it on.
   const [homeTab, setHomeTab] = useState<HomeTab>(() => {
@@ -317,15 +322,22 @@ function AuthedWorkspace({
     };
   }, [sideW]);
 
-  function goSideTab(tab: 'files' | 'ask') {
-    setSideTab(tab);
-    window.dispatchEvent(
-      new CustomEvent<'files' | 'ask'>(SHORTCUT_EVENTS.sideTab, { detail: tab }),
-    );
-    requestAnimationFrame(() => {
-      document.getElementById('side-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
+  // Right panel (Files / Ask / Links): hidden by default so the workspace
+  // stays two calm columns — opened from the command palette, TopBar menu,
+  // or its own commands.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<SideTab>('files');
+
+  useEffect(() => {
+    const go = (event: Event) => {
+      const tab = (event as CustomEvent<SideTab>).detail;
+      if (tab !== 'files' && tab !== 'ask' && tab !== 'links') return;
+      setPanelTab(tab);
+      setPanelOpen(true);
+    };
+    window.addEventListener(SHORTCUT_EVENTS.sideTab, go);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.sideTab, go);
+  }, []);
 
   // Mobile quick-create (bottom bar): same create-then-select contract as the
   // dashboard — invalidate first so the fallback effect sees the new id.
@@ -351,13 +363,16 @@ function AuthedWorkspace({
       <CommandPalette onSelectNote={onSelect} onOpenSettings={onOpenSettings} onHome={onHome} />
       <OnboardingTour />
       <ReminderNotifier notes={notesQuery.data ?? []} onOpenNote={onSelect} />
-      <OnboardingTour />
       <main
         className={cn(
-          'mx-auto grid max-w-7xl grid-cols-1 items-start gap-5 px-4 pt-6 pb-24 sm:px-6 lg:gap-6 lg:pb-8',
+          'mx-auto grid max-w-6xl grid-cols-1 items-start gap-6 px-4 pt-6 pb-24 sm:px-6 lg:pb-8',
           sideCollapsed
-            ? 'lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'
-            : 'lg:grid-cols-[var(--side-w)_minmax(0,1.15fr)_minmax(0,1fr)]',
+            ? panelOpen
+              ? 'lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]'
+              : 'lg:grid-cols-[minmax(0,1fr)]'
+            : panelOpen
+              ? 'lg:grid-cols-[var(--side-w)_minmax(0,1.3fr)_minmax(0,1fr)]'
+              : 'lg:grid-cols-[var(--side-w)_minmax(0,1fr)]',
         )}
         style={{ '--side-w': `${sideW}px` } as React.CSSProperties}
       >
@@ -415,28 +430,57 @@ function AuthedWorkspace({
           )}
         </motion.section>
 
-        <motion.section
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
-          className="flex min-h-0 scroll-mt-20 flex-col gap-4"
-          id="side-panel"
-        >
-          <SidePanel
-            onUnauthorized={onUnauthorized}
-            onTabChange={setSideTab}
-            onOpenNote={onSelect}
-            noteId={selectedId}
-          />
-        </motion.section>
+        {panelOpen && (
+          <motion.section
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed inset-y-0 right-0 z-50 flex w-80 max-w-[88vw] flex-col overflow-y-auto border-l border-zinc-800/70 bg-zinc-950 p-4 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)] lg:static lg:z-auto lg:w-auto lg:max-w-none lg:border-l-0 lg:bg-transparent lg:p-0 lg:shadow-none"
+            id="side-panel"
+            aria-label="Files and AI panel"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                panel
+              </span>
+              <button
+                onClick={() => setPanelOpen(false)}
+                aria-label="Close panel"
+                className="cursor-pointer rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-col gap-4">
+              <SidePanel
+                onUnauthorized={onUnauthorized}
+                onOpenNote={onSelect}
+                tab={panelTab}
+                onTabChange={setPanelTab}
+                noteId={selectedId}
+              />
+            </div>
+          </motion.section>
+        )}
       </main>
+
+      {/* Mobile drawer backdrop for the right panel. */}
+      {panelOpen && (
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          aria-label="Close panel"
+          onClick={() => setPanelOpen(false)}
+          className="fixed inset-0 z-40 cursor-default bg-zinc-950/70 backdrop-blur-sm lg:hidden"
+        />
+      )}
 
       {/* Mobile bottom bar. */}
       <nav
         aria-label="Primary"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800/70 bg-zinc-950/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
       >
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-3">
           <BottomTab
             icon={<Plus className="size-4" />}
             label="New"
@@ -452,18 +496,6 @@ function AuthedWorkspace({
             label="Search"
             onClick={() => window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.openPalette))}
           />
-          <BottomTab
-            icon={<Files className="size-4" />}
-            label="Files"
-            active={sideTab === 'files'}
-            onClick={() => goSideTab('files')}
-          />
-          <BottomTab
-            icon={<Sparkles className="size-4" />}
-            label="Ask"
-            active={sideTab === 'ask'}
-            onClick={() => goSideTab('ask')}
-          />
         </div>
       </nav>
 
@@ -475,7 +507,7 @@ function AuthedWorkspace({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.18 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               onClick={onCloseSidebar}
               className="fixed inset-0 z-40 bg-zinc-950/70 backdrop-blur-sm lg:hidden"
             />
@@ -541,7 +573,10 @@ const DUE_BADGE: Record<string, string> = {
   later: 'border-zinc-700 bg-zinc-800 text-zinc-300',
 };
 
-/** Home dashboard: quick capture, due-soon reminders, stats, continue list. */
+/** Collapsible sections on the overview dashboard. */
+type HomeSection = 'due' | 'favorites' | 'writing';
+
+/** Home dashboard: quick capture, continue-first list, due/favorites/writing. */
 function HomeDashboard({
   onSelect,
   onUnauthorized,
@@ -570,7 +605,13 @@ function HomeDashboard({
     .filter((n) => n.due_at && dueTone(n.due_at, now) !== 'later')
     .sort((a, b) => (String(a.due_at) < String(b.due_at) ? -1 : 1))
     .slice(0, 5);
-  const usageQuery = useQuery({ queryKey: ['usage'], queryFn: getUsage, retry: false });
+
+  // Single open section — urgent work (due) wins on first load, otherwise stay quiet.
+  const [openSection, setOpenSection] = useState<HomeSection | undefined>(
+    dueSoon.length > 0 ? 'due' : undefined,
+  );
+  const toggleSection = (section: HomeSection) =>
+    setOpenSection((current) => (current === section ? undefined : section));
 
   async function handleNew() {
     setCreating(true);
@@ -628,65 +669,43 @@ function HomeDashboard({
     }
   }
 
-  const usage = usageQuery.data;
-  const stats = [
-    { k: 'Notes', v: usage ? String(usage.notes.count) : '…' },
-    { k: 'Files', v: usage ? String(usage.files.count) : '…' },
-    {
-      k: 'Storage',
-      v: usage ? formatBytes(usage.notes.bytes + usage.files.bytes) : '…',
-      title: 'Notes + files against the 100 MB workspace quota',
-    },
-    { k: 'AI today', v: usage ? `${usage.ai.calls}/${usage.ai.limit}` : '…' },
-  ];
-
   return (
     <Card className="flex min-h-[480px] flex-col gap-5 p-6">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400">
-          <StickyNote className="size-4" />
-        </span>
         <div>
           <h2 className="text-sm font-semibold text-zinc-100">Home</h2>
           <p className="font-mono text-[11px] text-zinc-500">
             {notes.length} note{notes.length === 1 ? '' : 's'}
-            {favorites.length > 0 &&
-              ` · ${favorites.length} favorite${favorites.length === 1 ? '' : 's'}`}
-            {dueSoon.length > 0 && ` · ${dueSoon.length} due`}
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* View switcher: overview dashboard, month calendar, or kanban board. */}
+          <div
+            role="tablist"
+            aria-label="Home view"
+            className="flex self-start rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5"
+          >
+            <HomeTabButton
+              active={homeTab === 'overview'}
+              onClick={() => onTabChange('overview')}
+              icon={<StickyNote className="size-3.5" />}
+              label="Overview"
+            />
+            <HomeTabButton
+              active={homeTab === 'calendar'}
+              onClick={() => onTabChange('calendar')}
+              icon={<CalendarDays className="size-3.5" />}
+              label="Calendar"
+            />
+            <HomeTabButton
+              active={homeTab === 'board'}
+              onClick={() => onTabChange('board')}
+              icon={<LayoutGrid className="size-3.5" />}
+              label="Board"
+            />
+          </div>
           <RemindersBell />
-          <Button size="sm" variant="accent" disabled={creating} onClick={() => void handleNew()}>
-            <Plus /> New note
-          </Button>
         </div>
-      </div>
-
-      {/* View switcher: overview dashboard, month calendar, or kanban board. */}
-      <div
-        role="tablist"
-        aria-label="Home view"
-        className="flex self-start rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5"
-      >
-        <HomeTabButton
-          active={homeTab === 'overview'}
-          onClick={() => onTabChange('overview')}
-          icon={<StickyNote className="size-3.5" />}
-          label="Overview"
-        />
-        <HomeTabButton
-          active={homeTab === 'calendar'}
-          onClick={() => onTabChange('calendar')}
-          icon={<CalendarDays className="size-3.5" />}
-          label="Calendar"
-        />
-        <HomeTabButton
-          active={homeTab === 'board'}
-          onClick={() => onTabChange('board')}
-          icon={<LayoutGrid className="size-3.5" />}
-          label="Board"
-        />
       </div>
 
       {homeTab === 'calendar' && (
@@ -699,7 +718,7 @@ function HomeDashboard({
       {homeTab === 'overview' && (
         <>
           {/* Quick capture — first line is the title, the rest the body. */}
-          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
+          <div>
             <div className="flex items-center justify-between gap-2">
               <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
                 quick capture
@@ -730,64 +749,7 @@ function HomeDashboard({
             </div>
           </div>
 
-          {/* Due soon / overdue reminders. */}
-          {dueSoon.length > 0 && (
-            <div>
-              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-                due soon
-              </p>
-              <div className="mt-2 flex flex-col gap-1">
-                {dueSoon.map((note) => (
-                  <button
-                    key={note.id}
-                    onClick={() => onSelect(note.id)}
-                    className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <span
-                        className={cn(
-                          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]',
-                          DUE_BADGE[dueTone(note.due_at, now)],
-                        )}
-                      >
-                        <CalendarClock className="size-3" />
-                        {dueLabel(String(note.due_at), now)}
-                      </span>
-                      <span className="min-w-0 truncate text-[13px] font-medium text-zinc-200">
-                        {note.title}
-                      </span>
-                    </span>
-                    <ArrowRight className="size-3.5 shrink-0 text-zinc-700 transition-transform group-hover:translate-x-0.5 group-hover:text-zinc-400" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Favorites chips. */}
-          {favorites.length > 0 && (
-            <div>
-              <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-                favorites
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {favorites.slice(0, 8).map((note) => (
-                  <button
-                    key={note.id}
-                    onClick={() => onSelect(note.id)}
-                    className="flex max-w-[14rem] cursor-pointer items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
-                  >
-                    <Star className="size-3 shrink-0 fill-amber-400/80 text-amber-400/80" />
-                    <span className="truncate">{note.title}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Writing pulse: words today, streak, and the daily goal. */}
-          <WritingCard />
-
+          {/* Continue where you left off — the primary list. */}
           {recent.length > 0 ? (
             <div>
               <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
@@ -835,32 +797,71 @@ function HomeDashboard({
             </div>
           )}
 
-          {/* Workspace stats. */}
-          <div className="grid grid-cols-2 gap-2 border-t border-zinc-800/70 pt-4 sm:grid-cols-4">
-            {stats.map((s) => (
-              <div
-                key={s.k}
-                className="rounded-lg bg-zinc-900/50 px-2 py-2.5 text-center"
-                title={s.title}
-              >
-                <p className="font-mono text-[13px] text-zinc-200">{s.v}</p>
-                <p className="mt-0.5 text-[11px] text-zinc-500">{s.k}</p>
+          {/* Secondary sections — one open at a time, hidden when empty. */}
+          {dueSoon.length > 0 && (
+            <CollapsibleRow
+              open={openSection === 'due'}
+              onToggle={() => toggleSection('due')}
+              label="Due soon"
+              count={dueSoon.length}
+            >
+              <div className="mt-1 flex flex-col gap-1">
+                {dueSoon.map((note) => (
+                  <button
+                    key={note.id}
+                    onClick={() => onSelect(note.id)}
+                    className="group flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:border-zinc-800/80 hover:bg-zinc-900/50"
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]',
+                          DUE_BADGE[dueTone(note.due_at, now)],
+                        )}
+                      >
+                        <CalendarClock className="size-3" />
+                        {dueLabel(String(note.due_at), now)}
+                      </span>
+                      <span className="min-w-0 truncate text-[13px] font-medium text-zinc-200">
+                        {note.title}
+                      </span>
+                    </span>
+                    <ArrowRight className="size-3.5 shrink-0 text-zinc-700 transition-transform group-hover:translate-x-0.5 group-hover:text-zinc-400" />
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
+            </CollapsibleRow>
+          )}
 
-          <div className="grid grid-cols-3 gap-2 text-center">
-            {[
-              { k: 'Ctrl K', v: 'Jump anywhere' },
-              { k: '/ + Enter', v: 'Slash commands' },
-              { k: 'Ctrl S', v: 'Save right now' },
-            ].map((s) => (
-              <div key={s.k} className="rounded-lg bg-zinc-900/50 px-2 py-2.5">
-                <p className="font-mono text-[11px] text-zinc-200">{s.k}</p>
-                <p className="mt-0.5 text-[11px] text-zinc-500">{s.v}</p>
+          {favorites.length > 0 && (
+            <CollapsibleRow
+              open={openSection === 'favorites'}
+              onToggle={() => toggleSection('favorites')}
+              label="Favorites"
+              count={favorites.length}
+            >
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {favorites.slice(0, 8).map((note) => (
+                  <button
+                    key={note.id}
+                    onClick={() => onSelect(note.id)}
+                    className="flex max-w-[14rem] cursor-pointer items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
+                  >
+                    <Star className="size-3 shrink-0 fill-amber-400/80 text-amber-400/80" />
+                    <span className="truncate">{note.title}</span>
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
+            </CollapsibleRow>
+          )}
+
+          <CollapsibleRow
+            open={openSection === 'writing'}
+            onToggle={() => toggleSection('writing')}
+            label="Writing"
+          >
+            <WritingCard />
+          </CollapsibleRow>
         </>
       )}
     </Card>
@@ -966,11 +967,21 @@ function WritingCard() {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">writing</p>
-        <label className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-600">
-          daily goal
+    <div className="mt-1 flex flex-col gap-2.5 px-3 pb-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span className="flex items-baseline gap-1.5">
+          <span className="font-mono text-base leading-none text-zinc-100">{today}</span>
+          <span className="text-[11px] text-zinc-500">words today</span>
+        </span>
+        <span className="flex items-baseline gap-1.5">
+          <Flame
+            className={cn('size-3.5 self-center', streak > 0 ? 'text-accent-400' : 'text-zinc-700')}
+          />
+          <span className="font-mono text-base leading-none text-zinc-100">{streak}</span>
+          <span className="text-[11px] text-zinc-500">day streak</span>
+        </span>
+        <label className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-zinc-600">
+          goal
           <input
             type="number"
             min={0}
@@ -983,34 +994,18 @@ function WritingCard() {
           />
         </label>
       </div>
-      <div className="mt-2 flex items-end gap-5">
-        <div>
-          <p className="font-mono text-lg leading-none text-zinc-100">{today}</p>
-          <p className="mt-1 text-[11px] text-zinc-500">words today</p>
-        </div>
-        <div>
-          <p className="flex items-center gap-1 font-mono text-lg leading-none text-zinc-100">
-            <Flame className={cn('size-4', streak > 0 ? 'text-accent-400' : 'text-zinc-700')} />
-            {streak}
-          </p>
-          <p className="mt-1 text-[11px] text-zinc-500">day streak</p>
-        </div>
-        <div className="ml-auto text-right">
-          <p className="font-mono text-lg leading-none text-zinc-100">
-            {goal > 0 ? `${pct}%` : '—'}
-          </p>
-          <p className="mt-1 text-[11px] text-zinc-500">of goal</p>
-        </div>
-      </div>
       {goal > 0 && (
-        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-zinc-800">
-          <div
-            className={cn(
-              'h-full rounded-full transition-all duration-500',
-              today >= goal ? 'bg-emerald-400' : 'bg-accent-500',
-            )}
-            style={{ width: `${pct}%` }}
-          />
+        <div className="flex items-center gap-2.5">
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className={cn(
+                'h-full rounded-full transition-all duration-500',
+                today >= goal ? 'bg-emerald-400' : 'bg-accent-500',
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="font-mono text-[10px] text-zinc-500">{pct}%</span>
         </div>
       )}
     </div>

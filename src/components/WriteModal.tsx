@@ -65,8 +65,8 @@ const ACTION_ICONS: Record<string, LucideIcon> = {
 
 const panelMotion: Variants = {
   hidden: { opacity: 0, y: 16, scale: 0.97 },
-  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.28, ease: EASE } },
-  exit: { opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.18, ease: EASE } },
+  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.25, ease: EASE } },
+  exit: { opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.25, ease: EASE } },
 };
 
 export function WriteModal({
@@ -188,7 +188,7 @@ export function WriteModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.18 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           role="dialog"
           aria-modal="true"
           aria-label="Write with AI"
@@ -249,7 +249,7 @@ export function WriteModal({
                       initial={{ opacity: 0, x: -12 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -12 }}
-                      transition={{ duration: 0.22, ease: EASE }}
+                      transition={{ duration: 0.25, ease: EASE }}
                       className="flex min-h-0 flex-1 flex-col gap-4"
                     >
                       <section className="flex flex-col gap-2">
@@ -379,7 +379,7 @@ export function WriteModal({
                       initial={{ opacity: 0, x: 12 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 12 }}
-                      transition={{ duration: 0.22, ease: EASE }}
+                      transition={{ duration: 0.25, ease: EASE }}
                       className="flex min-h-0 flex-1 flex-col gap-3"
                     >
                       {failureBanner}
@@ -517,7 +517,7 @@ function Chip({
       aria-pressed={selected}
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.3, ease: EASE }}
+      transition={{ delay, duration: 0.25, ease: EASE }}
       className={cn(
         'inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50 active:scale-[0.97]',
         selected

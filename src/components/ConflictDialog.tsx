@@ -50,7 +50,7 @@ export function ConflictDialog({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.18 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           role="alertdialog"
           aria-modal="true"
           aria-labelledby="conflict-title"
@@ -86,7 +86,7 @@ export function ConflictDialog({
                   <VersionPane label="My version (unsaved)" text={localPreview} accent />
                   {serverPreview === null ? (
                     <div className="rounded-lg border border-zinc-800 bg-zinc-950/60">
-                      <p className="border-b border-zinc-800/70 px-3 py-1.5 font-mono text-[11px] tracking-wide text-zinc-500 uppercase">
+                      <p className="border-b border-zinc-800/70 px-3 py-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
                         Their version ({timeAgo(server.updated_at)})
                       </p>
                       <div className="flex min-h-24 flex-col justify-center gap-1.5 px-3 py-2.5">
@@ -132,7 +132,7 @@ function VersionPane({ label, text, accent }: { label: string; text: string; acc
           : 'rounded-lg border border-zinc-800 bg-zinc-950/60'
       }
     >
-      <p className="border-b border-zinc-800/70 px-3 py-1.5 font-mono text-[11px] tracking-wide text-zinc-500 uppercase">
+      <p className="border-b border-zinc-800/70 px-3 py-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
         {label}
       </p>
       <pre className="max-h-56 min-h-24 overflow-y-auto px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap text-zinc-300">

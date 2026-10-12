@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Archive,
   ArchiveRestore,
-  ArrowUpDown,
   Check,
   CheckSquare,
   ChevronDown,
+  Ellipsis,
   FileText,
   FolderInput,
   FolderPlus,
@@ -85,20 +85,24 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
   const queryClient = useQueryClient();
   const e2e = useE2E();
   const [search, setSearch] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
-  const [trashOpen, setTrashOpen] = useState(false);
+  const [showArchiveTrash, setShowArchiveTrash] = useState(false);
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [folderFilter, setFolderFilter] = useState<number | 'all' | 'fav' | 'due' | 'none'>('all');
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [templateOpen, setTemplateOpen] = useState(false);
   const [folderDraft, setFolderDraft] = useState(false);
   const [folderName, setFolderName] = useState('');
   const [renamingFolder, setRenamingFolder] = useState<number | null>(null);
   const [folderDeleteId, setFolderDeleteId] = useState<number | null>(null);
   const [bulkFolder, setBulkFolder] = useState('');
+  // Secondary navigation lives behind one-line collapsibles to keep the
+  // default sidebar quiet.
+  const [headerMenu, setHeaderMenu] = useState(false);
+  const [foldersOpen, setFoldersOpen] = useState(() => folderFilter !== 'all');
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [rowMenuId, setRowMenuId] = useState<number | null>(null);
   const [sort, setSort] = useState<NoteSort>(() => {
     try {
       const raw = localStorage.getItem(SORT_KEY);
@@ -118,7 +122,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     queryKey: ['notes-trash'],
     queryFn: listTrashedNotes,
     retry: false,
-    enabled: trashOpen,
+    enabled: showArchiveTrash,
   });
 
   useEffect(() => {
@@ -140,11 +144,50 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     return () => window.removeEventListener(SHORTCUT_EVENTS.filterTag, go);
   }, []);
 
+  // `/` focuses the notes search — the app's one primary search field. The
+  // sidebar renders twice (desktop column + mobile drawer), so only the
+  // visible instance claims the shortcut.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const focus = () => {
+      const el = searchRef.current;
+      if (!el || el.offsetParent === null) return;
+      el.focus();
+      el.select();
+    };
+    window.addEventListener(SHORTCUT_EVENTS.focusSearch, focus);
+    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, focus);
+  }, []);
+
   useEffect(() => {
     if (confirmId === null) return;
     const timer = setTimeout(() => setConfirmId(null), 3500);
     return () => clearTimeout(timer);
   }, [confirmId]);
+
+  // Close floating menus on outside click or Escape.
+  useEffect(() => {
+    if (!headerMenu && rowMenuId === null) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-sidebar-menu]')) {
+        setHeaderMenu(false);
+        setRowMenuId(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setHeaderMenu(false);
+        setRowMenuId(null);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [headerMenu, rowMenuId]);
 
   function changeSort(next: NoteSort) {
     setSort(next);
@@ -187,7 +230,6 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     },
     onSuccess: (note) => {
       invalidateAll();
-      setTemplateOpen(false);
       onSelect(note.id);
     },
     onError: (err) => handleApiError(err, onUnauthorized, 'Could not create note'),
@@ -317,7 +359,6 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
     .filter((note) => !note.archived && matches(note))
     .sort(folderFilter === 'due' ? dueSorter : sorter);
   const archived = notes.filter((note) => note.archived && matches(note)).sort(sorter);
-  const favorites = notes.filter((note) => !note.archived && note.favorite);
 
   function toggleSelect(id: number) {
     setSelected((prev) => {
@@ -406,64 +447,83 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
           notes
         </span>
         <div className="flex items-center gap-1">
-          <button
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => {
-              setSelectMode((v) => !v);
-              setSelected(new Set());
+              const blank = NOTE_TEMPLATES[0];
+              create.mutate({ title: blank.title, body: blank.body(new Date()) });
             }}
-            title={selectMode ? 'Exit selection' : 'Select multiple notes'}
-            aria-pressed={selectMode}
-            className={cn(
-              'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-colors',
-              selectMode
-                ? 'text-accent-300'
-                : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200',
-            )}
+            disabled={create.isPending}
+            title="New note (Ctrl+K for templates)"
           >
-            {selectMode ? <CheckSquare className="size-3.5" /> : <Square className="size-3.5" />}
-          </button>
-          <div className="relative">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                const blank = NOTE_TEMPLATES[0];
-                create.mutate({ title: blank.title, body: blank.body(new Date()) });
-              }}
-              disabled={create.isPending}
-              title="New note (Blank template — click the chevron for more)"
-            >
-              {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
-              New
-            </Button>
+            {create.isPending ? <Loader2 className="animate-spin" /> : <Plus />}
+            New
+          </Button>
+          <div className="relative" data-sidebar-menu>
             <button
-              onClick={() => setTemplateOpen((v) => !v)}
-              aria-expanded={templateOpen}
-              aria-label="Choose a note template"
-              className="cursor-pointer rounded-md p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              onClick={() => setHeaderMenu((v) => !v)}
+              aria-label="Sidebar options"
+              aria-expanded={headerMenu}
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
             >
-              <ChevronDown
-                className={cn('size-3.5 transition-transform', templateOpen && 'rotate-180')}
-              />
+              <Ellipsis className="size-4" />
             </button>
-            {templateOpen && (
-              <div
-                role="menu"
-                aria-label="Note templates"
-                className="absolute top-full right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
-              >
-                {NOTE_TEMPLATES.map((t) => (
-                  <button
-                    key={t.key}
-                    role="menuitem"
-                    onClick={() => create.mutate({ title: t.title, body: t.body(new Date()) })}
-                    className="block w-full cursor-pointer rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <AnimatePresence>
+              {headerMenu && (
+                <motion.div
+                  role="menu"
+                  aria-label="Sidebar options"
+                  data-sidebar-menu
+                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                  transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute top-full right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+                >
+                  <p className="px-2 pt-1 pb-1.5 font-mono text-[10px] tracking-[0.18em] text-zinc-600 uppercase">
+                    sort by
+                  </p>
+                  {SORTS.map((s) => (
+                    <button
+                      key={s.key}
+                      role="menuitemradio"
+                      aria-checked={sort === s.key}
+                      onClick={() => {
+                        changeSort(s.key);
+                        setHeaderMenu(false);
+                      }}
+                      className={cn(
+                        'flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-zinc-800',
+                        sort === s.key ? 'text-accent-300' : 'text-zinc-300',
+                      )}
+                    >
+                      {s.label}
+                      {sort === s.key && <Check className="size-3.5" />}
+                    </button>
+                  ))}
+                  <div className="my-1 h-px bg-zinc-800" />
+                  <MenuItemRow
+                    icon={<Square className="size-3.5" />}
+                    label={selectMode ? 'Exit selection' : 'Select notes'}
+                    onClick={() => {
+                      setSelectMode((v) => !v);
+                      setSelected(new Set());
+                      setHeaderMenu(false);
+                    }}
+                  />
+                  <MenuItemRow
+                    icon={<FolderPlus className="size-3.5" />}
+                    label="New folder"
+                    onClick={() => {
+                      setFoldersOpen(true);
+                      setFolderDraft(true);
+                      setHeaderMenu(false);
+                    }}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -471,6 +531,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
       <div className="relative px-1 pt-2">
         <Search className="pointer-events-none absolute top-1/2 left-3.5 size-3.5 -translate-y-[calc(50%-4px)] text-zinc-600" />
         <Input
+          ref={searchRef}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search notes, content, tags…"
@@ -479,136 +540,137 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
         />
       </div>
 
-      <div className="flex items-center gap-1.5 px-1 pt-2">
-        <ArrowUpDown className="size-3.5 shrink-0 text-zinc-600" />
-        <select
-          value={sort}
-          onChange={(e) => changeSort(e.target.value as NoteSort)}
-          aria-label="Sort notes"
-          className="w-full cursor-pointer rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-1 text-xs text-zinc-300 "
-        >
-          {SORTS.map((s) => (
-            <option key={s.key} value={s.key}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Folder + favorites filter pills (also drag-drop targets). */}
-      <div className="flex flex-wrap gap-1 px-1 pt-2" aria-label="Filter by folder">
-        <FilterPill
+      {/* Primary filters — one segmented control, nothing else competing. */}
+      <div
+        role="group"
+        aria-label="Filter notes"
+        className="mx-1 mt-2 flex rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5"
+      >
+        <FilterSegment
           active={folderFilter === 'all'}
           label="All"
           onClick={() => setFolderFilter('all')}
-          onDropNote={(id) => moveNoteToFolder(id, null)}
         />
-        <FilterPill
+        <FilterSegment
           active={folderFilter === 'fav'}
-          label="★ Favorites"
+          label="Favorites"
           onClick={() => setFolderFilter('fav')}
         />
-        <FilterPill
+        <FilterSegment
           active={folderFilter === 'due'}
           label="Due"
           onClick={() => setFolderFilter('due')}
         />
-        <FilterPill
-          active={folderFilter === 'none'}
-          label="Unfiled"
-          onClick={() => setFolderFilter('none')}
-          onDropNote={(id) => moveNoteToFolder(id, null)}
-        />
-        {folders.map((folder) => (
-          <FolderPill
-            key={folder.id}
-            folder={folder}
-            active={folderFilter === folder.id}
-            renaming={renamingFolder === folder.id}
-            confirmingDelete={folderDeleteId === folder.id}
-            onSelect={() => setFolderFilter(folder.id)}
-            onDropNote={(id) => moveNoteToFolder(id, folder.id)}
-            onRenameStart={() => {
-              setFolderDeleteId(null);
-              setRenamingFolder(folder.id);
-            }}
-            onRenameCommit={(name) => {
-              if (name.trim() && name.trim() !== folder.name) {
-                editFolder.mutate({ id: folder.id, name: name.trim() });
-              } else {
-                setRenamingFolder(null);
-              }
-            }}
-            onDeleteAsk={() => setFolderDeleteId(folder.id)}
-            onDeleteConfirm={() => dropFolder.mutate(folder.id)}
-            onDeleteCancel={() => setFolderDeleteId(null)}
-          />
-        ))}
-        {folderDraft ? (
-          <span className="flex items-center gap-1">
-            <input
-              autoFocus
-              value={folderName}
-              onChange={(e) => setFolderName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && folderName.trim()) addFolder.mutate(folderName.trim());
-                if (e.key === 'Escape') {
-                  setFolderDraft(false);
-                  setFolderName('');
-                }
-              }}
-              onBlur={() => {
-                if (!folderName.trim()) {
-                  setFolderDraft(false);
-                  setFolderName('');
-                }
-              }}
-              placeholder="Folder name…"
-              aria-label="New folder name"
-              className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 "
-            />
-            <button
-              onClick={() => folderName.trim() && addFolder.mutate(folderName.trim())}
-              aria-label="Create folder"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-accent-300 hover:bg-zinc-800"
-            >
-              <Check className="size-3.5" />
-            </button>
-          </span>
-        ) : (
-          <button
-            onClick={() => setFolderDraft(true)}
-            title="New folder"
-            aria-label="New folder"
-            className="flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-          >
-            <FolderPlus className="size-3.5" />
-          </button>
-        )}
       </div>
 
-      {/* Tag chips. */}
-      {allTags.length > 0 && (
-        <div className="flex flex-wrap gap-1 px-1 pt-2" aria-label="Filter by tag">
-          {tagFilter && (
+      {/* Folders — collapsed until needed (drag-drop targets live inside). */}
+      <CollapsibleRow
+        open={foldersOpen}
+        onToggle={() => setFoldersOpen((v) => !v)}
+        label="Folders"
+        count={folders.length}
+      >
+        <div className="flex flex-wrap gap-1 px-1 pt-1.5" aria-label="Filter by folder">
+          <FilterPill
+            active={folderFilter === 'none'}
+            label="Unfiled"
+            onClick={() => setFolderFilter('none')}
+            onDropNote={(id) => moveNoteToFolder(id, null)}
+          />
+          {folders.map((folder) => (
+            <FolderPill
+              key={folder.id}
+              folder={folder}
+              active={folderFilter === folder.id}
+              renaming={renamingFolder === folder.id}
+              confirmingDelete={folderDeleteId === folder.id}
+              onSelect={() => setFolderFilter(folder.id)}
+              onDropNote={(id) => moveNoteToFolder(id, folder.id)}
+              onRenameStart={() => {
+                setFolderDeleteId(null);
+                setRenamingFolder(folder.id);
+              }}
+              onRenameCommit={(name) => {
+                if (name.trim() && name.trim() !== folder.name) {
+                  editFolder.mutate({ id: folder.id, name: name.trim() });
+                } else {
+                  setRenamingFolder(null);
+                }
+              }}
+              onDeleteAsk={() => setFolderDeleteId(folder.id)}
+              onDeleteConfirm={() => dropFolder.mutate(folder.id)}
+              onDeleteCancel={() => setFolderDeleteId(null)}
+            />
+          ))}
+          {folderDraft ? (
+            <span className="flex items-center gap-1">
+              <input
+                autoFocus
+                value={folderName}
+                onChange={(e) => setFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && folderName.trim()) addFolder.mutate(folderName.trim());
+                  if (e.key === 'Escape') {
+                    setFolderDraft(false);
+                    setFolderName('');
+                  }
+                }}
+                onBlur={() => {
+                  if (!folderName.trim()) {
+                    setFolderDraft(false);
+                    setFolderName('');
+                  }
+                }}
+                placeholder="Folder name…"
+                aria-label="New folder name"
+                className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-100 "
+              />
+              <button
+                onClick={() => folderName.trim() && addFolder.mutate(folderName.trim())}
+                aria-label="Create folder"
+                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-accent-300 hover:bg-zinc-800"
+              >
+                <Check className="size-3.5" />
+              </button>
+            </span>
+          ) : (
             <button
-              onClick={() => setTagFilter(null)}
-              className="flex cursor-pointer items-center gap-1 rounded-full border border-accent-600/50 bg-accent-500/15 px-2 py-0.5 text-[11px] text-accent-300"
+              onClick={() => setFolderDraft(true)}
+              title="New folder"
+              aria-label="New folder"
+              className="flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
             >
-              #{tagFilter} <X className="size-3" />
+              <FolderPlus className="size-3.5" />
             </button>
           )}
-          {!tagFilter &&
-            allTags.map(([tag, count]) => (
+        </div>
+      </CollapsibleRow>
+
+      {/* Tag chips — collapsed; an active filter stays visible while collapsed. */}
+      {tagFilter && (
+        <div className="flex flex-wrap gap-1 px-1 pt-2" aria-label="Filter by tag">
+          <button
+            onClick={() => setTagFilter(null)}
+            className="flex cursor-pointer items-center gap-1 rounded-full border border-accent-600/50 bg-accent-500/15 px-2 py-0.5 text-[11px] text-accent-300"
+          >
+            #{tagFilter} <X className="size-3" />
+          </button>
+        </div>
+      )}
+      {allTags.length > 0 && !tagFilter && (
+        <CollapsibleRow open={tagsOpen} onToggle={() => setTagsOpen((v) => !v)} label="Tags">
+          <div className="flex flex-wrap gap-1 px-1 pt-1.5" aria-label="Filter by tag">
+            {allTags.map(([tag, count]) => (
               <button
                 key={tag}
                 onClick={() => setTagFilter(tag)}
-                className="cursor-pointer rounded-full border border-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-500 hover:border-zinc-600 hover:text-zinc-200"
+                className="cursor-pointer rounded-full border border-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-500 transition-colors hover:border-zinc-600 hover:text-zinc-200"
               >
                 #{tag} · {count}
               </button>
             ))}
-        </div>
+          </div>
+        </CollapsibleRow>
       )}
 
       {selectMode && selected.size > 0 && (
@@ -680,6 +742,10 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                 renaming={renamingId === note.id}
                 confirming={confirmId === note.id}
                 deleting={remove.isPending && remove.variables?.id === note.id}
+                menuOpen={rowMenuId === note.id}
+                onMenuToggle={() =>
+                  setRowMenuId((prev) => (prev === note.id ? null : note.id))
+                }
                 onToggleCheck={() => toggleSelect(note.id)}
                 onSelect={() => onSelect(note.id)}
                 onPin={() => patch.mutate({ id: note.id, fields: { pinned: !note.pinned } })}
@@ -732,113 +798,101 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
               </div>
             )}
 
-            {favorites.length > 0 && folderFilter === 'all' && !query && (
-              <p className="px-2 py-1 font-mono text-[11px] text-zinc-600">
-                {favorites.length} favorite{favorites.length === 1 ? '' : 's'} · {notes.length}{' '}
-                notes
-              </p>
-            )}
-
-            {archived.length > 0 && (
-              <div className="mt-1">
-                <button
-                  onClick={() => setShowArchived((value) => !value)}
-                  aria-expanded={showArchived}
-                  className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-900/60 hover:text-zinc-300"
-                >
-                  <ChevronDown
-                    className={cn('size-3.5 transition-transform', !showArchived && '-rotate-90')}
-                  />
-                  Archived ({archived.length})
-                </button>
-                <AnimatePresence initial={false}>
-                  {showArchived && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.18 }}
-                      className="overflow-hidden"
-                    >
-                      {archived.map((note) => (
-                        <NoteRow
-                          key={note.id}
-                          note={note}
-                          folderName={folderNameOf(note.folder_id)}
-                          selected={note.id === selectedId}
-                          checked={selected.has(note.id)}
-                          selectMode={selectMode}
-                          renaming={renamingId === note.id}
-                          confirming={confirmId === note.id}
-                          deleting={remove.isPending && remove.variables?.id === note.id}
-                          dimmed
-                          onToggleCheck={() => toggleSelect(note.id)}
-                          onSelect={() => onSelect(note.id)}
-                          onPin={() =>
-                            patch.mutate({ id: note.id, fields: { pinned: !note.pinned } })
-                          }
-                          onFavorite={() =>
-                            patch.mutate({ id: note.id, fields: { favorite: !note.favorite } })
-                          }
-                          onArchive={() =>
-                            patch.mutate({ id: note.id, fields: { archived: false } })
-                          }
-                          archivedView
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData('text/noting-note', String(note.id));
-                            e.dataTransfer.effectAllowed = 'move';
-                          }}
-                          onDropNote={() => undefined}
-                          onRenameStart={() => {
-                            setConfirmId(null);
-                            setRenamingId(note.id);
-                          }}
-                          onRenameCommit={(title) => {
-                            setRenamingId(null);
-                            if (title.trim() && title.trim() !== note.title) {
-                              patch.mutate({ id: note.id, fields: { title: title.trim() } });
-                            }
-                          }}
-                          onRenameCancel={() => setRenamingId(null)}
-                          onDeleteAsk={() => setConfirmId(note.id)}
-                          onDeleteCancel={() => setConfirmId(null)}
-                          onDeleteConfirm={() => remove.mutate({ id: note.id })}
-                        />
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
-
-            {/* Note trash — 30 days, like files. */}
+            {/* Archive + trash — one footer, one section. */}
             <div className="mt-1">
               <button
-                onClick={() => setTrashOpen((value) => !value)}
-                aria-expanded={trashOpen}
+                onClick={() => setShowArchiveTrash((value) => !value)}
+                aria-expanded={showArchiveTrash}
                 className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-900/60 hover:text-zinc-300"
               >
                 <ChevronDown
-                  className={cn('size-3.5 transition-transform', !trashOpen && '-rotate-90')}
+                  className={cn(
+                    'size-3.5 transition-transform',
+                    !showArchiveTrash && '-rotate-90',
+                  )}
                 />
-                Trash ({trashQuery.data?.length ?? '…'})
+                Archived & trash
+                <span className="ml-auto font-mono text-[10px] text-zinc-600">
+                  {archived.length} · {trashQuery.data?.length ?? '…'}
+                </span>
               </button>
               <AnimatePresence initial={false}>
-                {trashOpen && (
+                {showArchiveTrash && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     className="overflow-hidden"
                   >
+                    <p className="px-2 pt-1 pb-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                      Archived {archived.length > 0 && `· ${archived.length}`}
+                    </p>
+                    {archived.length === 0 && (
+                      <p className="px-2 pb-2 text-xs text-zinc-600">Nothing archived.</p>
+                    )}
+                    {archived.map((note) => (
+                      <NoteRow
+                        key={note.id}
+                        note={note}
+                        folderName={folderNameOf(note.folder_id)}
+                        selected={note.id === selectedId}
+                        checked={selected.has(note.id)}
+                        selectMode={selectMode}
+                        renaming={renamingId === note.id}
+                        confirming={confirmId === note.id}
+                        deleting={remove.isPending && remove.variables?.id === note.id}
+                        dimmed
+                        menuOpen={rowMenuId === note.id}
+                        onMenuToggle={() =>
+                          setRowMenuId((prev) => (prev === note.id ? null : note.id))
+                        }
+                        onToggleCheck={() => toggleSelect(note.id)}
+                        onSelect={() => onSelect(note.id)}
+                        onPin={() =>
+                          patch.mutate({ id: note.id, fields: { pinned: !note.pinned } })
+                        }
+                        onFavorite={() =>
+                          patch.mutate({ id: note.id, fields: { favorite: !note.favorite } })
+                        }
+                        onArchive={() =>
+                          patch.mutate({ id: note.id, fields: { archived: false } })
+                        }
+                        archivedView
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/noting-note', String(note.id));
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDropNote={() => undefined}
+                        onRenameStart={() => {
+                          setConfirmId(null);
+                          setRenamingId(note.id);
+                        }}
+                        onRenameCommit={(title) => {
+                          setRenamingId(null);
+                          if (title.trim() && title.trim() !== note.title) {
+                            patch.mutate({ id: note.id, fields: { title: title.trim() } });
+                          }
+                        }}
+                        onRenameCancel={() => setRenamingId(null)}
+                        onDeleteAsk={() => setConfirmId(note.id)}
+                        onDeleteCancel={() => setConfirmId(null)}
+                        onDeleteConfirm={() => remove.mutate({ id: note.id })}
+                      />
+                    ))}
+
+                    {/* Note trash — 30 days, like files. */}
+                    <p className="px-2 pt-2 pb-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                      Trash
+                      {typeof trashQuery.data?.length === 'number' && ` · ${trashQuery.data.length}`}
+                    </p>
                     {trashQuery.isPending && (
                       <div className="flex flex-col gap-1.5 p-1">
                         <Skeleton className="h-10 w-full" />
                       </div>
                     )}
                     {trashQuery.isSuccess && trashQuery.data.length === 0 && (
-                      <p className="px-2 py-4 text-center text-xs text-zinc-600">
+                      <p className="px-2 py-2 text-center text-xs text-zinc-600">
                         Trash is empty. Deleted notes rest here for 30 days.
                       </p>
                     )}
@@ -912,6 +966,96 @@ function BulkButton({
     >
       {label}
     </button>
+  );
+}
+
+/** Menu row used by the sidebar's overflow menu. */
+function MenuItemRow({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+    >
+      <span className="text-zinc-500">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+/** Segmented filter button — the sidebar's only always-visible filter. */
+function FilterSegment({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'flex-1 cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-all duration-200',
+        active ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** One-line collapsible section for secondary navigation (folders, tags). */
+export function CollapsibleRow({
+  open,
+  onToggle,
+  label,
+  count,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-900/60 hover:text-zinc-300"
+      >
+        <ChevronDown className={cn('size-3.5 transition-transform', !open && '-rotate-90')} />
+        {label}
+        {typeof count === 'number' && count > 0 && (
+          <span className="font-mono text-[10px] text-zinc-600">{count}</span>
+        )}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -1103,6 +1247,8 @@ interface NoteRowProps {
   deleting: boolean;
   dimmed?: boolean;
   archivedView?: boolean;
+  menuOpen: boolean;
+  onMenuToggle: () => void;
   onToggleCheck: () => void;
   onSelect: () => void;
   onPin: () => void;
@@ -1129,6 +1275,8 @@ function NoteRow({
   deleting,
   dimmed,
   archivedView,
+  menuOpen,
+  onMenuToggle,
   onToggleCheck,
   onSelect,
   onPin,
@@ -1148,10 +1296,9 @@ function NoteRow({
 
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.16 }}
+      transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('text/noting-note')) {
           e.preventDefault();
@@ -1278,40 +1425,88 @@ function NoteRow({
             </span>
           ) : (
             <span
-              className="hover-reveal mt-1 flex items-center gap-0.5 transition-opacity duration-150"
+              data-sidebar-menu
+              className="mt-1 flex items-center gap-0.5"
               onClick={(e) => e.stopPropagation()}
             >
-              <IconButton
-                title={note.pinned ? 'Unpin' : 'Pin'}
-                onClick={onPin}
-                active={note.pinned}
-              >
-                {note.pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-              </IconButton>
-              <IconButton
-                title={note.favorite ? 'Remove favorite' : 'Favorite'}
-                onClick={onFavorite}
-                active={note.favorite}
-              >
-                <Star className={cn('size-3.5', note.favorite && 'fill-accent-400')} />
-              </IconButton>
-              <IconButton title="Rename" onClick={onRenameStart}>
-                <Pencil className="size-3.5" />
-              </IconButton>
-              <IconButton title={archivedView ? 'Unarchive' : 'Archive'} onClick={onArchive}>
-                {archivedView ? (
-                  <ArchiveRestore className="size-3.5" />
-                ) : (
-                  <Archive className="size-3.5" />
+              <button
+                onClick={onMenuToggle}
+                aria-label={`Actions for ${note.title}`}
+                aria-expanded={menuOpen}
+                title="Note actions"
+                className={cn(
+                  'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md transition-all duration-150',
+                  menuOpen
+                    ? 'bg-zinc-800 text-zinc-200'
+                    : 'text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200',
                 )}
-              </IconButton>
-              <IconButton
-                title="Move to trash"
-                onClick={onDeleteAsk}
-                className="hover:bg-red-950/50 hover:text-red-300"
               >
-                <Trash2 className="size-3.5" />
-              </IconButton>
+                <Ellipsis className="size-3.5" />
+              </button>
+              <AnimatePresence initial={false}>
+                {menuOpen && (
+                  <motion.span
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -4 }}
+                    transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                    className="flex items-center gap-0.5"
+                  >
+                    <IconButton
+                      title={note.pinned ? 'Unpin' : 'Pin'}
+                      onClick={() => {
+                        onMenuToggle();
+                        onPin();
+                      }}
+                      active={note.pinned}
+                    >
+                      {note.pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                    </IconButton>
+                    <IconButton
+                      title={note.favorite ? 'Remove favorite' : 'Favorite'}
+                      onClick={() => {
+                        onMenuToggle();
+                        onFavorite();
+                      }}
+                      active={note.favorite}
+                    >
+                      <Star className={cn('size-3.5', note.favorite && 'fill-accent-400')} />
+                    </IconButton>
+                    <IconButton
+                      title="Rename"
+                      onClick={() => {
+                        onMenuToggle();
+                        onRenameStart();
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </IconButton>
+                    <IconButton
+                      title={archivedView ? 'Unarchive' : 'Archive'}
+                      onClick={() => {
+                        onMenuToggle();
+                        onArchive();
+                      }}
+                    >
+                      {archivedView ? (
+                        <ArchiveRestore className="size-3.5" />
+                      ) : (
+                        <Archive className="size-3.5" />
+                      )}
+                    </IconButton>
+                    <IconButton
+                      title="Move to trash"
+                      onClick={() => {
+                        onMenuToggle();
+                        onDeleteAsk();
+                      }}
+                      className="hover:bg-red-950/50 hover:text-red-300"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </IconButton>
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </span>
           )}
         </div>

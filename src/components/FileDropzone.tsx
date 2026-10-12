@@ -195,7 +195,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               aria-live="polite"
               className="flex flex-col gap-1.5 overflow-hidden"
             >
@@ -207,7 +207,7 @@ export default function FileDropzone({ onUnauthorized }: FileDropzoneProps) {
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, x: 24 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     className={cn(
                       'relative overflow-hidden rounded-lg border px-3 py-2',
                       item.status === 'error'

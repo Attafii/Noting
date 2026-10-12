@@ -101,16 +101,6 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
     return () => clearTimeout(timer);
   }, [confirmId]);
 
-  // `/` focuses file search (README shortcut); citation chips open previews.
-  useEffect(() => {
-    const focus = () => {
-      setView('files');
-      requestAnimationFrame(() => searchRef.current?.focus());
-    };
-    window.addEventListener(SHORTCUT_EVENTS.focusSearch, focus);
-    return () => window.removeEventListener(SHORTCUT_EVENTS.focusSearch, focus);
-  }, []);
-
   // External preview requests (e.g. citation chips in the Ask panel).
   useEffect(() => {
     const open = (event: Event) => {
@@ -349,7 +339,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, x: 32 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     className={cn(
                       'group flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors duration-200',
                       confirming

@@ -773,7 +773,6 @@ export async function fetchChallenge(): Promise<Challenge> {
 
 export function mintToken(input: {
   label?: string;
-  inviteCode?: string;
   question: string;
   answer: string;
   hint?: string;
@@ -782,10 +781,7 @@ export function mintToken(input: {
   /** Cloudflare Turnstile client token (fallback only). */
   turnstileToken?: string;
 }): Promise<MintResult> {
-  return publicRequest<MintResult>('/api/tokens', {
-    ...input,
-    invite_code: input.inviteCode,
-  });
+  return publicRequest<MintResult>('/api/tokens', input);
 }
 
 export function fetchQuestion(

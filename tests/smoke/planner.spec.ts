@@ -202,6 +202,8 @@ test.describe('planner', () => {
 
     // ---- Overview: writing card + reminder bell ----
     await page.getByRole('tab', { name: 'Overview' }).click();
+    // The writing card sits in a collapsed section — expand it first.
+    await page.getByRole('button', { name: 'Writing' }).click();
     await expect(page.getByLabel('Daily word goal')).toBeVisible();
     await expect(page.getByRole('button', { name: /due-note reminders/ })).toBeVisible();
 
@@ -213,6 +215,9 @@ test.describe('planner', () => {
       .first()
       .click();
     await expect(page.getByLabel('Note editor')).toBeVisible();
+    // The right panel is collapsed by default — open it from the TopBar menu.
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.getByRole('menuitem', { name: 'Files & AI' }).click();
     await page.locator('#side-panel').getByRole('tab', { name: 'Links' }).click();
     await expect(
       page.locator('#side-panel').getByText('Linked mentions', { exact: true }),

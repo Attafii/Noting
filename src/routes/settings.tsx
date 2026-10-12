@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Download, Loader2, Lock, Upload } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Download, Loader2, Lock, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { endSession, getUsage, triggerBlobDownload } from '../lib/api';
 import { formatBytes } from '../lib/format';
@@ -57,6 +57,7 @@ function SettingsPage() {
   const [bindingsVersion, setBindingsVersion] = useState(0);
   const [recording, setRecording] = useState<ShortcutId | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [migrationBusy, setMigrationBusy] = useState(false);
   const [migrationProgress, setMigrationProgress] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -205,36 +206,12 @@ function SettingsPage() {
                 ))}
               </div>
             </Row>
-            <Row label="Density">
-              <Segmented
-                options={[
-                  { key: 'comfortable', label: 'Comfortable' },
-                  { key: 'compact', label: 'Compact' },
-                ]}
-                active={theme.density}
-                onPick={(density) => applyTheme({ ...getTheme(), density: density as DensityName })}
-              />
-            </Row>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="flex flex-col gap-4 p-5">
             <SectionTitle>Editor</SectionTitle>
-            <Row label="Autosave delay">
-              <Segmented
-                options={[
-                  { key: '500', label: '0.5s' },
-                  { key: '1000', label: '1s' },
-                  { key: '2000', label: '2s' },
-                ]}
-                active={String(autosave)}
-                onPick={(v) => {
-                  setAutosaveMs(parseInt(v, 10));
-                  setAutosave(parseInt(v, 10));
-                }}
-              />
-            </Row>
             <Row label="Default view">
               <Segmented
                 options={[
@@ -246,16 +223,6 @@ function SettingsPage() {
                 onPick={(v) => {
                   setDefaultViewMode(v as DefaultViewMode);
                   setMode(v as DefaultViewMode);
-                }}
-              />
-            </Row>
-            <Row label="Spellcheck">
-              <Toggle
-                on={spell}
-                label="Spellcheck in editor"
-                onFlip={() => {
-                  setSpellcheck(!spell);
-                  setSpell(!spell);
                 }}
               />
             </Row>
@@ -311,7 +278,8 @@ function SettingsPage() {
               </div>
             ))}
             <p className="text-[11px] text-zinc-600">
-              Click a shortcut, then press the new keys. Ctrl/⌘ counts as a modifier.
+              Click a shortcut, then press the new keys. Ctrl/⌘ counts as a modifier. Type{' '}
+              <span className="font-mono text-zinc-500">/</span> in the editor for slash commands.
             </p>
           </CardContent>
         </Card>
@@ -380,7 +348,7 @@ function SettingsPage() {
                 }}
               />
             </div>
-            <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-3">
+            <div className="border-t border-zinc-800/70 pt-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[13px] font-medium text-zinc-200">Encrypt existing content</p>
@@ -409,7 +377,7 @@ function SettingsPage() {
             <div className="flex items-center gap-2">
               <Button size="sm" disabled={backupBusy} onClick={() => void handleExport()}>
                 {backupBusy ? <Loader2 className="animate-spin" /> : <Download />}
-                Export backup
+                Download backup
               </Button>
               <Button size="sm" disabled={backupBusy} onClick={() => importRef.current?.click()}>
                 <Upload />
@@ -434,6 +402,68 @@ function SettingsPage() {
             >
               Lock workspace (clear token on this device)
             </button>
+          </CardContent>
+        </Card>
+
+        {/* Niche controls stay behind one disclosure — the cards above stay quiet. */}
+        <Card>
+          <CardContent className="flex flex-col gap-4 p-5">
+            <button
+              onClick={() => setAdvancedOpen((value) => !value)}
+              aria-expanded={advancedOpen}
+              className="flex cursor-pointer items-center justify-between rounded-md text-left"
+            >
+              <SectionTitle>Advanced</SectionTitle>
+              <ChevronDown
+                className={cn(
+                  'size-4 text-zinc-500 transition-transform',
+                  !advancedOpen && '-rotate-90',
+                )}
+              />
+            </button>
+            {advancedOpen && (
+              <>
+                <Row label="Density">
+                  <Segmented
+                    options={[
+                      { key: 'comfortable', label: 'Comfortable' },
+                      { key: 'compact', label: 'Compact' },
+                    ]}
+                    active={theme.density}
+                    onPick={(density) =>
+                      applyTheme({ ...getTheme(), density: density as DensityName })
+                    }
+                  />
+                </Row>
+                <Row label="Autosave delay">
+                  <Segmented
+                    options={[
+                      { key: '500', label: '0.5s' },
+                      { key: '1000', label: '1s' },
+                      { key: '2000', label: '2s' },
+                    ]}
+                    active={String(autosave)}
+                    onPick={(v) => {
+                      setAutosaveMs(parseInt(v, 10));
+                      setAutosave(parseInt(v, 10));
+                    }}
+                  />
+                </Row>
+                <Row label="Spellcheck">
+                  <Toggle
+                    on={spell}
+                    label="Spellcheck in editor"
+                    onFlip={() => {
+                      setSpellcheck(!spell);
+                      setSpell(!spell);
+                    }}
+                  />
+                </Row>
+                <p className="text-[11px] text-zinc-600">
+                  Rarely-touched controls live here so everyday settings stay scannable.
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

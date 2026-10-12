@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { Files, Link2, Sparkles } from 'lucide-react';
 import { AskPanel } from './AskPanel';
 import { BacklinksPanel } from './BacklinksPanel';
@@ -9,32 +9,22 @@ import { cn } from '../lib/utils';
 
 interface SidePanelProps {
   onUnauthorized: () => void;
+  /** Controlled tab — the workspace owns panel state, this just renders it. */
+  tab: SideTab;
   onTabChange?: (tab: SideTab) => void;
   onOpenNote?: (noteId: number) => void;
   /** Currently open note — drives the Links (wikilink graph) tab. */
   noteId?: number | null;
 }
 
-export function SidePanel({ onUnauthorized, onTabChange, onOpenNote, noteId }: SidePanelProps) {
-  const [tab, setTab] = useState<SideTab>('files');
-
-  const selectTab = useCallback(
-    (next: SideTab) => {
-      setTab(next);
-      onTabChange?.(next);
-    },
-    [onTabChange],
-  );
-
-  // External tab requests (e.g. command palette "Go to Ask").
-  useEffect(() => {
-    const go = (event: Event) => {
-      const next = (event as CustomEvent<SideTab>).detail;
-      if (next === 'files' || next === 'ask' || next === 'links') selectTab(next);
-    };
-    window.addEventListener(SHORTCUT_EVENTS.sideTab, go);
-    return () => window.removeEventListener(SHORTCUT_EVENTS.sideTab, go);
-  }, [selectTab]);
+export function SidePanel({
+  onUnauthorized,
+  tab,
+  onTabChange,
+  onOpenNote,
+  noteId,
+}: SidePanelProps) {
+  const selectTab = useCallback((next: SideTab) => onTabChange?.(next), [onTabChange]);
 
   function handleOpenDocument(documentId: number) {
     selectTab('files');

@@ -42,7 +42,7 @@ function SharedNotePage() {
             <span className="flex size-6 items-center justify-center rounded-md border border-accent-600/50 bg-accent-500/10 font-mono text-[11px] font-semibold text-accent-300">
               N
             </span>
-            <span className="font-mono text-[11px] tracking-[0.22em] text-zinc-400 uppercase">
+            <span className="font-mono text-[11px] tracking-[0.18em] text-zinc-400 uppercase">
               noting
             </span>
           </Link>

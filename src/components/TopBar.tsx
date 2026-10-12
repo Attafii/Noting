@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check,
   CloudOff,
   Command,
+  Files,
   Loader2,
   Lock,
   Moon,
@@ -16,19 +17,17 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { endSession, listDocuments } from '../lib/api';
-import { SHORTCUT_EVENTS } from '../lib/shortcuts';
-import { timeAgo } from '../lib/format';
+import { SHORTCUT_EVENTS, type SideTab } from '../lib/shortcuts';
 import { applyTheme, getTheme, useTheme } from '../lib/theme';
 import { useSaveStatus, type SaveState } from '../lib/save-status';
 import { hasPendingMutations } from '../lib/outbox';
 import { cn } from '../lib/utils';
-import { Badge } from './ui/badge';
 
-const SAVE_LABEL: Record<SaveState, string> = {
+const SAVE_TITLE: Record<SaveState, string> = {
   idle: 'Ready',
   saving: 'Saving…',
-  saved: 'Saved',
-  error: 'Save failed',
+  saved: 'All changes saved',
+  error: 'Save failed — retrying',
 };
 
 export function TopBar({
@@ -49,6 +48,8 @@ export function TopBar({
     typeof navigator === 'undefined' ? true : navigator.onLine,
   );
   const [pendingEdits, setPendingEdits] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const refreshPending = () => {
@@ -70,17 +71,39 @@ export function TopBar({
     };
   }, []);
 
+  // Close the overflow menu on outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  // One connection pill: offline and queued edits beat a healthy connection
+  // (which stays silent) so the bar reads calm by default.
+  const connection = !online
+    ? { label: 'Offline', tone: 'text-zinc-400' }
+    : pendingEdits
+      ? { label: 'Syncing', tone: 'text-accent-300' }
+      : docs.isError
+        ? { label: 'Reconnecting', tone: 'text-amber-300' }
+        : null;
+
   const brand = (
     <>
       <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
         <SquareTerminal className="size-4" />
       </span>
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
-        <span className="hidden truncate font-mono text-[11px] text-zinc-600 sm:inline">
-          cross-device bridge
-        </span>
-      </div>
+      <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
     </>
   );
 
@@ -91,8 +114,9 @@ export function TopBar({
           {onMenu && (
             <button
               onClick={onMenu}
-              aria-label="Open notes"
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 transition-colors hover:bg-zinc-800 lg:hidden"
+              aria-label="Toggle notes sidebar"
+              title="Toggle notes sidebar"
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
             >
               <PanelLeft className="size-4" />
             </button>
@@ -112,147 +136,173 @@ export function TopBar({
         </div>
 
         <div className="flex items-center gap-2">
-          {!online && (
-            <Badge variant="warning" title="No network connection — note edits queue locally">
-              <CloudOff className="size-3" />
-              Offline
-            </Badge>
-          )}
           <button
             onClick={() => window.dispatchEvent(new CustomEvent(SHORTCUT_EVENTS.openPalette))}
-            title="Command palette (Ctrl+K)"
+            title="Search & commands (Ctrl+K)"
             aria-label="Open command palette"
             className="flex h-6 cursor-pointer items-center gap-1 rounded-full border border-zinc-700/70 bg-zinc-900 px-2 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
           >
             <Command className="size-3" />
             <kbd className="font-mono text-[10px]">K</kbd>
           </button>
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.span
-              key={save.state}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.15 }}
-            >
-              <Badge
-                variant={
-                  save.state === 'error' ? 'error' : save.state === 'saved' ? 'success' : 'neutral'
-                }
-                title={save.updatedAt ? `Last saved ${timeAgo(save.updatedAt)}` : undefined}
+
+          {/* Single save indicator — icon only, details live in the tooltip. */}
+          <span
+            title={SAVE_TITLE[save.state]}
+            className="flex h-6 w-6 items-center justify-center"
+            aria-hidden="true"
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={save.state}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                className={cn(
+                  save.state === 'saved' && 'text-emerald-400',
+                  save.state === 'error' && 'text-red-400',
+                  (save.state === 'saving' || save.state === 'idle') && 'text-zinc-500',
+                )}
               >
                 <SaveIcon state={save.state} />
-                {SAVE_LABEL[save.state]}
-                {save.state === 'saved' && save.updatedAt && (
-                  <span className="opacity-70">{timeAgo(save.updatedAt)}</span>
-                )}
-              </Badge>
-            </motion.span>
-          </AnimatePresence>
+              </motion.span>
+            </AnimatePresence>
+          </span>
           <span className="sr-only" aria-live="polite">
-            {SAVE_LABEL[save.state]}
+            {SAVE_TITLE[save.state]}
           </span>
 
-          {pendingEdits && (
-            <Badge variant="warning" title="Encrypted edits are waiting to sync">
-              <CloudOff className="size-3" />
-              Pending
-            </Badge>
-          )}
-          {typeof docs.data?.length === 'number' && (
-            <Badge
-              variant="neutral"
-              title={`${docs.data.length} documents stored`}
-              className="hidden sm:inline-flex"
-            >
-              {docs.data.length} {docs.data.length === 1 ? 'file' : 'files'}
-            </Badge>
-          )}
+          {/* One connection pill — only shown when the status is not normal. */}
+          <AnimatePresence initial={false}>
+            {connection && (
+              <motion.span
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                className={cn(
+                  'flex items-center gap-1 rounded-full border border-zinc-700/70 bg-zinc-900 px-2 py-0.5 font-mono text-[10px]',
+                  connection.tone,
+                )}
+                title="Workspace status"
+              >
+                <CloudOff className="size-3" />
+                {connection.label}
+              </motion.span>
+            )}
+          </AnimatePresence>
 
           {(onSettings || onLock) && (
-            <span className="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/80 p-1">
-              {onSettings && (
-                <button
-                  onClick={() => {
-                    const next = getTheme();
-                    applyTheme({ ...next, mode: next.mode === 'dark' ? 'light' : 'dark' });
-                  }}
-                  aria-label={
-                    theme.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'
-                  }
-                  title={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  {theme.mode === 'dark' ? (
-                    <Sun className="size-3.5" />
-                  ) : (
-                    <Moon className="size-3.5" />
-                  )}
-                </button>
-              )}
-
-              {onSettings && (
-                <button
-                  onClick={onSettings}
-                  aria-label="Settings"
-                  title="Settings"
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  <Settings2 className="size-3.5" />
-                </button>
-              )}
-
-              {onLock && (
-                <button
-                  onClick={() => {
-                    void endSession();
-                    onLock();
-                    toast.success('Workspace locked — token and answer cleared');
-                  }}
-                  aria-label="Lock workspace"
-                  title="Lock workspace (clears the token and the in-memory answer)"
-                  className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-red-950/60 hover:text-red-300"
-                >
-                  <Lock className="size-3.5" />
-                </button>
-              )}
-            </span>
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="More actions"
+                aria-expanded={menuOpen}
+                title="More"
+                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <span className="flex gap-0.5" aria-hidden="true">
+                  <span className="size-1 rounded-full bg-current" />
+                  <span className="size-1 rounded-full bg-current" />
+                  <span className="size-1 rounded-full bg-current" />
+                </span>
+              </button>
+              <AnimatePresence>
+                {menuOpen && (
+                  <motion.div
+                    role="menu"
+                    aria-label="Workspace actions"
+                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                    className="absolute top-full right-0 z-30 mt-2 w-44 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+                  >
+                    <MenuItem
+                      icon={<Files className="size-3.5" />}
+                      label="Files & AI"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        window.dispatchEvent(
+                          new CustomEvent<SideTab>(SHORTCUT_EVENTS.sideTab, {
+                            detail: 'files',
+                          }),
+                        );
+                      }}
+                    />
+                    <MenuItem
+                      icon={theme.mode === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+                      label={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
+                      onClick={() => {
+                        const next = getTheme();
+                        applyTheme({ ...next, mode: next.mode === 'dark' ? 'light' : 'dark' });
+                        setMenuOpen(false);
+                      }}
+                    />
+                    {onSettings && (
+                      <MenuItem
+                        icon={<Settings2 className="size-3.5" />}
+                        label="Settings"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onSettings();
+                        }}
+                      />
+                    )}
+                    {onLock && (
+                      <MenuItem
+                        icon={<Lock className="size-3.5" />}
+                        label="Lock workspace"
+                        danger
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void endSession();
+                          onLock();
+                          toast.success('Workspace locked — token and answer cleared');
+                        }}
+                      />
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           )}
-
-          <span
-            title={docs.isError ? 'Connection error' : 'Connected'}
-            className={cn(
-              'flex h-6 w-6 items-center justify-center rounded-full border',
-              docs.isError
-                ? 'border-red-900/70 bg-red-950/50 text-red-400'
-                : 'border-emerald-900/70 bg-emerald-950/50 text-emerald-400',
-            )}
-          >
-            <span className="relative flex size-1.5">
-              <span
-                className={cn(
-                  'absolute inline-flex h-full w-full animate-ping rounded-full opacity-60',
-                  docs.isError ? 'bg-red-400' : 'bg-emerald-400',
-                )}
-              />
-              <span
-                className={cn(
-                  'relative inline-flex size-1.5 rounded-full',
-                  docs.isError ? 'bg-red-400' : 'bg-emerald-400',
-                )}
-              />
-            </span>
-            <span className="sr-only">{docs.isError ? 'Connection error' : 'Connected'}</span>
-          </span>
         </div>
       </div>
     </header>
   );
 }
 
+function MenuItem({
+  icon,
+  label,
+  danger,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-zinc-800',
+        danger ? 'text-red-300 hover:text-red-200' : 'text-zinc-300 hover:text-zinc-100',
+      )}
+    >
+      <span className={danger ? 'text-red-400/80' : 'text-zinc-500'}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
 function SaveIcon({ state }: { state: SaveState }) {
-  if (state === 'saving') return <Loader2 className="size-3 animate-spin" />;
-  if (state === 'saved') return <Check className="size-3" />;
-  if (state === 'error') return <TriangleAlert className="size-3" />;
+  if (state === 'saving') return <Loader2 className="size-3.5 animate-spin" />;
+  if (state === 'saved') return <Check className="size-3.5" />;
+  if (state === 'error') return <TriangleAlert className="size-3.5" />;
   return <span className="size-1.5 rounded-full bg-zinc-500" />;
 }

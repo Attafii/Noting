@@ -4,6 +4,8 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
+import '@fontsource-variable/geist';
+import '@fontsource-variable/jetbrains-mono';
 import './styles.css';
 import { initTheme } from './lib/theme';
 import { AppErrorBoundary } from './components/AppErrorBoundary';

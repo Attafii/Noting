@@ -21,8 +21,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { createNote, listDocuments, listNotesSorted, triggerBlobDownload } from '../lib/api';
+import { createNote, listDocuments, listNotesSorted, saveNote, triggerBlobDownload } from '../lib/api';
+import { encryptText } from '../lib/crypto';
+import { getCryptoKey, useE2E } from '../lib/e2e';
 import { useFocusTrap } from '../lib/focus-trap';
+import { NOTE_TEMPLATES } from '../lib/note-templates';
 import { SHORTCUT_EVENTS, type HomeTab, type SideTab } from '../lib/shortcuts';
 import { cn } from '../lib/utils';
 import { Input } from './ui/input';
@@ -44,6 +47,7 @@ interface PaletteItem {
 
 export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: CommandPaletteProps) {
   const queryClient = useQueryClient();
+  const e2e = useE2E();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -77,7 +81,22 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
   const docsQuery = useQuery({ queryKey: ['documents'], queryFn: listDocuments, enabled: open });
 
   const create = useMutation({
-    mutationFn: () => createNote('Untitled'),
+    mutationFn: async (opts?: { title: string; body: string }) => {
+      const note = await createNote(opts?.title ?? 'Untitled');
+      const body = opts?.body ?? '';
+      if (body) {
+        let content = body;
+        let enc = false;
+        if (e2e) {
+          const key = await getCryptoKey();
+          if (!key) throw new Error('No encryption key available — re-enter your token');
+          content = await encryptText(key, body);
+          enc = true;
+        }
+        await saveNote({ id: note.id, content, baseVersion: note.content_version ?? 1, enc });
+      }
+      return note;
+    },
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['palette-notes'] });
@@ -252,9 +271,16 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
           key: 'new-note',
           label: 'New note',
           icon: Plus,
-          run: () => create.mutate(),
+          run: () => create.mutate(undefined),
           match: match('new note create'),
         },
+        ...NOTE_TEMPLATES.filter((t) => t.key !== 'blank').map((t) => ({
+          key: `template-${t.key}`,
+          label: `New note · ${t.label}`,
+          icon: FileText,
+          run: () => create.mutate({ title: t.title, body: t.body(new Date()) }),
+          match: match(`template ${t.label} ${t.title}`),
+        })),
         {
           key: 'save',
           label: 'Save note now',
@@ -313,7 +339,7 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
         },
         {
           key: 'export',
-          label: 'Export backup (.zip)',
+          label: 'Download backup (.zip)',
           icon: Download,
           run: () => void runExport(),
           match: match('export backup download zip'),
@@ -372,7 +398,7 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
           onClick={close}
           role="dialog"
           aria-modal="true"
@@ -385,7 +411,7 @@ export function CommandPalette({ onSelectNote, onOpenSettings, onHome }: Command
             initial={{ opacity: 0, y: -10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.99 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 shadow-[0_24px_70px_-12px_rgb(0_0_0/0.9)]"
           >

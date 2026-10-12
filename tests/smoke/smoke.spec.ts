@@ -97,7 +97,9 @@ test.describe('smoke', () => {
     await page.screenshot({ path: 'tests/smoke/artifacts/01-workspace.png' });
 
     // ---- Write with AI: form → preview → insert ----
-    await page.getByRole('button', { name: 'Write with AI' }).click();
+    // Write lives behind the unified AI menu in the footer now.
+    await page.getByRole('button', { name: 'AI actions' }).click();
+    await page.getByRole('menuitem', { name: 'Write with AI' }).click();
     const dialog = page.getByRole('dialog', { name: 'Write with AI' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('start with')).toBeVisible();

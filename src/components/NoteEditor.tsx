@@ -8,6 +8,7 @@ import {
   Copy,
   CopyPlus,
   Download,
+  Ellipsis,
   Feather,
   History,
   ListOrdered,
@@ -54,7 +55,6 @@ import {
   insertCodeBlock,
   insertLink,
   insertSnippet,
-  insertTable,
   readingMinutes,
   toggleChecklist,
   type EditResult,
@@ -146,6 +146,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   /** Decrypted server text for the conflict dialog (null while resolving). */
   const [serverPreview, setServerPreview] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [footerMenuOpen, setFooterMenuOpen] = useState(false);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
   /** First-load adoption state; null until server data arrives (replaces an init flag). */
   const [loadState, setLoadState] = useState<{
     anchor: string;
@@ -186,7 +188,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
   const recurringNextDue =
     isRecurring(recurrence) && dueAt ? nextOccurrence(dueAt, recurrence) : null;
 
-  // One popover at a time — stacked popovers read as a bug.
+  // One popover at a time — stacked popovers read as a bug. Opening a popover
+  // also dismisses the footer menus so at most one float is ever on screen.
   function togglePopover(target: 'history' | 'toc' | 'export' | 'goal' | 'due') {
     const open = {
       history: historyOpen,
@@ -195,12 +198,46 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       goal: goalOpen,
       due: dueOpen,
     }[target];
+    setFooterMenuOpen(false);
+    setAiMenuOpen(false);
     setHistoryOpen(target === 'history' ? !open : false);
     setTocOpen(target === 'toc' ? !open : false);
     setExportOpen(target === 'export' ? !open : false);
     setGoalOpen(target === 'goal' ? !open : false);
     setDueOpen(target === 'due' ? !open : false);
   }
+
+  // Single dismiss manager for every footer float (2 menus + 5 popovers).
+  // `data-editor-float` marks both triggers and panels, so a press meant to
+  // toggle a float is never also read as an outside click.
+  const floatingOpen =
+    footerMenuOpen || aiMenuOpen || tocOpen || exportOpen || goalOpen || dueOpen || historyOpen;
+  useEffect(() => {
+    if (!floatingOpen) return;
+    const closeAll = () => {
+      setFooterMenuOpen(false);
+      setAiMenuOpen(false);
+      setTocOpen(false);
+      setExportOpen(false);
+      setGoalOpen(false);
+      setDueOpen(false);
+      setHistoryOpen(false);
+    };
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-editor-float]')) return;
+      closeAll();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAll();
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [floatingOpen]);
 
   // Reminder edits are metadata: the server keeps updated_at stable, so the
   // conflict anchor is untouched by setting or clearing a due date.
@@ -687,14 +724,16 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
     });
   }
 
-  async function handleCopy() {
+  async function handleCopy(): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1600);
+      return true;
     } catch {
       toast.error('Copy failed — select the text manually');
+      return false;
     }
   }
 
@@ -736,9 +775,6 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
       case 'h2':
         applyEdit(applyHeading(text, sel, 2));
         break;
-      case 'h3':
-        applyEdit(applyHeading(text, sel, 3));
-        break;
       case 'bold':
         applyEdit(applyWrap(text, sel, '**', '**'));
         break;
@@ -756,9 +792,6 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
         break;
       case 'code':
         applyEdit(insertCodeBlock(text, sel));
-        break;
-      case 'table':
-        applyEdit(insertTable(text, sel, 3, 3));
         break;
       case 'quote':
         applyEdit(applyLinePrefix(text, sel, '> '));
@@ -1108,7 +1141,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
                 ref={previewRef}
                 className="markdown-body max-h-[52vh] min-h-[320px] flex-1 overflow-y-auto px-5 py-4 lg:max-h-none"
               >
@@ -1141,7 +1174,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
                 className="grid flex-1 grid-cols-1 lg:grid-cols-2"
               >
                 <div className="relative flex flex-col border-b border-zinc-800/70 lg:border-r lg:border-b-0">
@@ -1209,7 +1242,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
                 className={cn(
                   'relative flex flex-1 flex-col',
                   zen && 'mx-auto w-full max-w-[65ch]',
@@ -1258,7 +1291,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                data-editor-float
                 role="dialog"
                 aria-label="Version history"
                 className="absolute right-3 bottom-14 z-20 w-80 max-w-[calc(100%-1.5rem)] overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
@@ -1316,7 +1350,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                data-editor-float
                 role="dialog"
                 aria-label="Note outline"
                 className="absolute right-3 bottom-14 z-20 w-72 max-w-[calc(100%-1.5rem)] overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
@@ -1337,7 +1372,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                data-editor-float
                 role="menu"
                 aria-label="Export note"
                 className="absolute right-3 bottom-14 z-20 w-60 max-w-[calc(100%-1.5rem)] overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
@@ -1386,7 +1422,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                data-editor-float
                 role="dialog"
                 aria-label="Word goal"
                 className="absolute right-3 bottom-14 z-20 w-64 max-w-[calc(100%-1.5rem)] rounded-xl border border-zinc-700/70 bg-zinc-900 p-3 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
@@ -1434,7 +1471,8 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
+                transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                data-editor-float
                 role="dialog"
                 aria-label="Reminder"
                 className="absolute right-3 bottom-14 z-20 max-h-[calc(100vh-8rem)] w-64 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl border border-zinc-700/70 bg-zinc-900 p-3 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
@@ -1466,22 +1504,24 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                   )}
                 </div>
 
-                {/* Repeat rule. */}
-                <select
-                  value={recurrence}
-                  onChange={(event) => {
-                    const next = event.target.value as NoteRecurrence;
-                    if (next !== recurrence) recurrenceMutate.mutate(next);
-                  }}
-                  aria-label="Repeat rule"
-                  className="mt-2 w-full cursor-pointer rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-accent-600/60 focus:outline-none"
-                >
-                  {(Object.keys(RECURRENCE_LABELS) as NoteRecurrence[]).map((rule) => (
-                    <option key={rule} value={rule}>
-                      {RECURRENCE_LABELS[rule]}
-                    </option>
-                  ))}
-                </select>
+                {/* Repeat rule — only relevant once a date exists. */}
+                {dueAt && (
+                  <select
+                    value={recurrence}
+                    onChange={(event) => {
+                      const next = event.target.value as NoteRecurrence;
+                      if (next !== recurrence) recurrenceMutate.mutate(next);
+                    }}
+                    aria-label="Repeat rule"
+                    className="mt-2 w-full cursor-pointer rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-accent-600/60 focus:outline-none"
+                  >
+                    {(Object.keys(RECURRENCE_LABELS) as NoteRecurrence[]).map((rule) => (
+                      <option key={rule} value={rule}>
+                        {RECURRENCE_LABELS[rule]}
+                      </option>
+                    ))}
+                  </select>
+                )}
 
                 {/* Snooze state / controls. */}
                 {snoozedUntil ? (
@@ -1545,7 +1585,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
             <span className="hidden font-mono text-[11px] text-zinc-500 sm:inline">
               autosave · {Math.round(getAutosaveMs() / 100) / 10}s
             </span>
-            <div className="flex min-h-[44px] flex-wrap items-center justify-end gap-1.5">
+            <div className="relative flex min-h-[44px] flex-wrap items-center justify-end gap-1.5">
               <Button
                 variant="ghost"
                 size="sm"
@@ -1555,16 +1595,6 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               >
                 <Search />
                 <span className="hidden md:inline">Find</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => togglePopover('toc')}
-                title="Note outline"
-                aria-expanded={tocOpen}
-              >
-                <ListOrdered />
-                <span className="hidden md:inline">Outline</span>
               </Button>
               <Button
                 variant="ghost"
@@ -1579,16 +1609,7 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => togglePopover('goal')}
-                title="Word goal"
-                aria-expanded={goalOpen}
-              >
-                <Target />
-                <span className="hidden md:inline">{goal > 0 ? `${words}/${goal}` : 'Goal'}</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
+                data-editor-float
                 onClick={() => togglePopover('due')}
                 title={dueAt ? `Reminder: ${dueLabel(dueAt)}` : 'Set a reminder'}
                 aria-expanded={dueOpen}
@@ -1604,36 +1625,6 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => togglePopover('history')}
-                title="Version history (Ctrl+H)"
-                aria-expanded={historyOpen}
-              >
-                <History />
-                History
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCopy}
-                disabled={text.length === 0}
-                title="Copy note to clipboard"
-              >
-                {copied ? <Check className="text-emerald-400" /> : <Copy />}
-                {copied ? 'Copied' : 'Copy'}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => togglePopover('export')}
-                title="Export, print, or duplicate this note"
-                aria-expanded={exportOpen}
-              >
-                <Download />
-                <span className="hidden md:inline">Export</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
                 onClick={() => setShareOpen(true)}
                 title={
                   shouldEncrypt
@@ -1644,31 +1635,147 @@ export default function NoteEditor({ noteId, onUnauthorized, onSelectNote }: Not
                 <Share2 />
                 <span className="hidden md:inline">Share</span>
               </Button>
+
+              {/* One AI entry — format and write live behind the same door. */}
               <Button
-                variant="secondary"
+                variant="ghost"
                 size="sm"
-                onClick={() => setWriteOpen(true)}
-                title="Write new content with AI"
-                aria-label="Write with AI"
+                data-editor-float
+                onClick={() => {
+                  setFooterMenuOpen(false);
+                  setAiMenuOpen((value) => !value);
+                }}
+                title="AI actions — format or write"
+                aria-haspopup="menu"
+                aria-expanded={aiMenuOpen}
+                aria-label="AI actions"
               >
-                <Feather />
-                <span className="hidden md:inline">Write with AI</span>
+                <Sparkles className={cn(aiMenuOpen && 'text-accent-300')} />
+                <span className="hidden md:inline">AI</span>
               </Button>
               <Button
-                variant="accent"
+                variant="ghost"
                 size="sm"
-                onClick={handleFormat}
-                disabled={format.isPending || text.length === 0 || shouldEncrypt}
-                title={
-                  shouldEncrypt
-                    ? 'Encrypted notes stay private — AI formatting skipped'
-                    : 'Clean up and structure with AI'
-                }
-                className={cn(format.isPending && 'opacity-80')}
+                data-editor-float
+                onClick={() => {
+                  setAiMenuOpen(false);
+                  setFooterMenuOpen((value) => !value);
+                }}
+                title="More actions"
+                aria-haspopup="menu"
+                aria-expanded={footerMenuOpen}
+                aria-label="More note actions"
               >
-                {format.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />}
-                {format.isPending ? 'Formatting…' : 'Format with AI'}
+                <Ellipsis />
               </Button>
+
+              <AnimatePresence>
+                {aiMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                    data-editor-float
+                    role="menu"
+                    aria-label="AI actions"
+                    className="absolute right-0 bottom-full z-30 mb-2 w-52 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+                  >
+                    <ExportRow
+                      icon={
+                        format.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="size-3.5" />
+                        )
+                      }
+                      label={
+                        shouldEncrypt
+                          ? 'Format — private notes stay as-is'
+                          : format.isPending
+                            ? 'Formatting…'
+                            : 'Format & clean up'
+                      }
+                      onClick={() => {
+                        setAiMenuOpen(false);
+                        if (text.length > 0) handleFormat();
+                      }}
+                    />
+                    <ExportRow
+                      icon={<Feather className="size-3.5" />}
+                      label="Write with AI…"
+                      onClick={() => {
+                        setAiMenuOpen(false);
+                        setWriteOpen(true);
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {footerMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+                    data-editor-float
+                    role="menu"
+                    aria-label="More note actions"
+                    className="absolute right-0 bottom-full z-30 mb-2 w-52 overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 p-1.5 shadow-[0_16px_50px_-12px_rgb(0_0_0/0.8)]"
+                  >
+                    <ExportRow
+                      icon={<ListOrdered className="size-3.5" />}
+                      label="Outline"
+                      onClick={() => {
+                        setFooterMenuOpen(false);
+                        togglePopover('toc');
+                      }}
+                    />
+                    <ExportRow
+                      icon={<Target className="size-3.5" />}
+                      label={goal > 0 ? `Goal · ${words}/${goal}` : 'Set a word goal'}
+                      onClick={() => {
+                        setFooterMenuOpen(false);
+                        togglePopover('goal');
+                      }}
+                    />
+                    <ExportRow
+                      icon={<History className="size-3.5" />}
+                      label="Version history"
+                      onClick={() => {
+                        setFooterMenuOpen(false);
+                        togglePopover('history');
+                      }}
+                    />
+                    <ExportRow
+                      icon={
+                        copied ? (
+                          <Check className="text-emerald-400" />
+                        ) : (
+                          <Copy className="size-3.5" />
+                        )
+                      }
+                      label={copied ? 'Copied' : 'Copy to clipboard'}
+                      onClick={() => {
+                        setFooterMenuOpen(false);
+                        void handleCopy().then((ok) => {
+                          if (ok) toast.success('Copied to clipboard');
+                        });
+                      }}
+                    />
+                    <ExportRow
+                      icon={<Download className="size-3.5" />}
+                      label="Export"
+                      onClick={() => {
+                        setFooterMenuOpen(false);
+                        togglePopover('export');
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </CardContent>

@@ -3,28 +3,24 @@ import {
   Code2,
   Heading1,
   Heading2,
-  Heading3,
   Italic,
   Link2,
   List,
   ListChecks,
   Quote,
   Strikethrough,
-  Table2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export type ToolbarAction =
   | 'h1'
   | 'h2'
-  | 'h3'
   | 'bold'
   | 'italic'
   | 'strike'
   | 'checklist'
   | 'bullet'
   | 'code'
-  | 'table'
   | 'quote'
   | 'link';
 
@@ -33,7 +29,6 @@ const GROUPS: { actions: { key: ToolbarAction; title: string; icon: React.ReactN
     actions: [
       { key: 'h1', title: 'Heading 1', icon: <Heading1 className="size-3.5" /> },
       { key: 'h2', title: 'Heading 2', icon: <Heading2 className="size-3.5" /> },
-      { key: 'h3', title: 'Heading 3', icon: <Heading3 className="size-3.5" /> },
     ],
   },
   {
@@ -49,7 +44,6 @@ const GROUPS: { actions: { key: ToolbarAction; title: string; icon: React.ReactN
       { key: 'checklist', title: 'Checklist', icon: <ListChecks className="size-3.5" /> },
       { key: 'bullet', title: 'Bullet list', icon: <List className="size-3.5" /> },
       { key: 'quote', title: 'Quote', icon: <Quote className="size-3.5" /> },
-      { key: 'table', title: 'Insert table', icon: <Table2 className="size-3.5" /> },
       { key: 'link', title: 'Insert link', icon: <Link2 className="size-3.5" /> },
     ],
   },

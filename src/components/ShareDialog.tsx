@@ -135,7 +135,7 @@ function SharePanel({ onClose, noteId, noteTitle, encrypted, onUnauthorized }: S
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -148,7 +148,7 @@ function SharePanel({ onClose, noteId, noteTitle, encrypted, onUnauthorized }: S
         initial={{ opacity: 0, y: -10, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -6, scale: 0.99 }}
-        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-lg overflow-hidden rounded-xl border border-zinc-700/70 bg-zinc-900 shadow-[0_24px_70px_-12px_rgb(0_0_0/0.9)]"
       >

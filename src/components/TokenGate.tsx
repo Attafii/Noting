@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArrowRight,
   BadgeCheck,
   Check,
   Copy,
@@ -115,7 +116,7 @@ export function TokenGate({ onSaved }: TokenGateProps) {
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 10 }}
-                  transition={{ duration: 0.2 }}
+                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 >
                   <UnlockForm onSaved={onSaved} onGoGenerate={() => setTab('generate')} />
                 </motion.div>
@@ -125,7 +126,7 @@ export function TokenGate({ onSaved }: TokenGateProps) {
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -10 }}
-                  transition={{ duration: 0.2 }}
+                  transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 >
                   <GenerateForm onDone={() => setTab('unlock')} initialToken={null} />
                 </motion.div>
@@ -253,7 +254,7 @@ function UnlockForm({
       </div>
 
       <form onSubmit={handleFetchQuestion} className="flex flex-col gap-2">
-        <label className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+        <label className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
           Access token
         </label>
         <div className="relative">
@@ -301,7 +302,7 @@ function UnlockForm({
           <div>
             <label
               htmlFor="recovery-code-direct"
-              className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+              className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
             >
               Recovery code
             </label>
@@ -329,7 +330,7 @@ function UnlockForm({
           className="flex flex-col gap-2.5 rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3.5"
         >
           <div>
-            <p className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+            <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
               Your security question
             </p>
             <p className="mt-1 text-[13px] font-medium text-zinc-100">“{question}”</p>
@@ -338,7 +339,7 @@ function UnlockForm({
             <div>
               <label
                 htmlFor="recovery-code"
-                className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+                className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
               >
                 Recovery code
               </label>
@@ -455,10 +456,11 @@ function GenerateForm({
   initialToken: string | null;
 }) {
   const [label, setLabel] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [hint, setHint] = useState('');
+  // Two calm steps: 1) question + answer, 2) optional details + human-check.
+  const [step, setStep] = useState<1 | 2>(1);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [challengeLoading, setChallengeLoading] = useState(false);
@@ -519,6 +521,19 @@ function GenerateForm({
     void loadChallenge();
   }, [loadChallenge, useTurnstile]);
 
+  function handleStepOne(event: FormEvent) {
+    event.preventDefault();
+    if (question.trim().length < 4 || question.trim().length > 140) {
+      toast.error('Question must be 4–140 characters');
+      return;
+    }
+    if (answer.trim().length < 2 || answer.trim().length > 100) {
+      toast.error('Answer must be 2–100 characters');
+      return;
+    }
+    setStep(2);
+  }
+
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
     if (question.trim().length < 4 || question.trim().length > 140) {
@@ -566,7 +581,6 @@ function GenerateForm({
     try {
       const res = await mintToken({
         label: label.trim() || undefined,
-        inviteCode: inviteCode.trim() || undefined,
         question: question.trim(),
         answer: answer.trim(),
         hint: hint.trim() || undefined,
@@ -647,7 +661,7 @@ function GenerateForm({
         </div>
 
         <div className="rounded-xl border border-accent-600/30 bg-accent-500/5 p-3.5">
-          <p className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
+          <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
             Access token — copy it now
           </p>
           <code className="mt-1.5 block font-mono text-[13px] break-all text-accent-200 select-all">
@@ -663,7 +677,7 @@ function GenerateForm({
 
         {result.recoveryCode && (
           <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3.5">
-            <p className="font-mono text-[11px] tracking-[0.14em] text-emerald-300 uppercase">
+            <p className="font-mono text-[11px] tracking-[0.18em] text-emerald-300 uppercase">
               Recovery code — copy it now
             </p>
             <code className="mt-1.5 block font-mono text-[13px] break-all text-emerald-200 select-all">
@@ -715,7 +729,7 @@ function GenerateForm({
             setQuestion('');
             setHint('');
             setLabel('');
-            setInviteCode('');
+            setStep(1);
             setSelected(null);
             setFailCount(0);
             setTurnstileToken(null);
@@ -735,239 +749,283 @@ function GenerateForm({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-[15px] font-semibold text-zinc-100">Create your personal token</h1>
+        <div className="flex items-center gap-2" aria-label={`Step ${step} of 2`}>
+          <StepDot label="Question" active={step === 1} done={step === 2} />
+          <span className="h-px w-6 bg-zinc-800" aria-hidden="true" />
+          <StepDot label="Details" active={step === 2} done={false} />
+        </div>
+        <h1 className="mt-3 text-[15px] font-semibold text-zinc-100">
+          {step === 1 ? 'Choose your security question' : 'Almost there'}
+        </h1>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
-          Self-service, no email. Your question, answer, and recovery code become the keys to your
-          notes.
+          {step === 1
+            ? 'Your question and answer become the key to your notes. No email, no password resets.'
+            : 'Optional details, then one human-check to finish.'}
         </p>
       </div>
 
-      <form onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="token-label"
-            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
+      <AnimatePresence mode="wait" initial={false}>
+        {step === 1 ? (
+          <motion.form
+            key="gen-step1"
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -10 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            onSubmit={handleStepOne}
+            className="flex flex-col gap-3"
           >
-            Nickname <span className="text-zinc-700 normal-case">(optional)</span>
-          </label>
-          <Input
-            id="token-label"
-            placeholder="e.g. laptop"
-            value={label}
-            maxLength={40}
-            onChange={(e) => setLabel(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="token-invite"
-            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
-          >
-            Invite code <span className="text-zinc-700 normal-case">(private deployments)</span>
-          </label>
-          <Input
-            id="token-invite"
-            placeholder="Required when self-service is invite-only"
-            value={inviteCode}
-            maxLength={200}
-            onChange={(e) => setInviteCode(e.target.value)}
-            autoComplete="one-time-code"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="token-question"
-            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
-          >
-            Security question
-          </label>
-          <Input
-            id="token-question"
-            placeholder="e.g. What street did I grow up on?"
-            value={question}
-            maxLength={140}
-            onChange={(e) => setQuestion(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="token-answer"
-            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
-          >
-            Answer <span className="text-zinc-700 normal-case">(case doesn’t matter)</span>
-          </label>
-          <Input
-            id="token-answer"
-            type="password"
-            placeholder="Something only you know"
-            value={answer}
-            maxLength={100}
-            onChange={(e) => setAnswer(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="token-hint"
-            className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase"
-          >
-            Hint{' '}
-            <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
-          </label>
-          <Input
-            id="token-hint"
-            placeholder="e.g. the one with the blue door"
-            value={hint}
-            maxLength={200}
-            onChange={(e) => setHint(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-
-        <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
-          <div className="flex items-center gap-2">
-            <p className="font-mono text-[11px] tracking-[0.14em] text-zinc-500 uppercase">
-              {useTurnstile ? 'Human-check' : 'Tile puzzle (fallback)'}
-            </p>
-            {!useTurnstile && (
-              <button
-                type="button"
-                onClick={() => void loadChallenge()}
-                disabled={challengeLoading}
-                aria-label="New challenge"
-                title="New challenge"
-                className="ml-auto cursor-pointer rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="token-question"
+                className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
               >
-                <RefreshCw className={cn('size-3.5', challengeLoading && 'animate-spin')} />
-              </button>
-            )}
-          </div>
-
-          {useTurnstile ? (
-            <div className="mt-2">
-              <TurnstileWidget
-                key={turnstileKey}
-                onVerify={setTurnstileToken}
-                onExpire={() => setTurnstileToken(null)}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setUseTurnstile(false);
-                  setTurnstileToken(null);
-                  void loadChallenge();
-                }}
-                className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
-              >
-                Back to the tile puzzle
-              </button>
-            </div>
-          ) : challenge ? (
-            <>
-              <p className="mt-1 text-[13px] font-medium text-zinc-200">
-                {challenge.instruction || challenge.question || 'Tap the odd one out'}
-              </p>
-              <div
-                role="group"
-                aria-label={challenge.instruction || 'Human-check: tap the odd tile'}
-                className="mt-2.5 grid grid-cols-3 gap-2"
-                onPointerMove={() => {
-                  interactionsRef.current += 1;
-                }}
-              >
-                {challenge.tiles.map((tile, i) => (
-                  <button
-                    key={`${challenge.nonce}-${i}`}
-                    type="button"
-                    onClick={() => {
-                      interactionsRef.current += 1;
-                      setSelected(i);
-                    }}
-                    onKeyDown={() => {
-                      interactionsRef.current += 1;
-                    }}
-                    aria-label={`Tile ${i + 1}: ${tile.label}`}
-                    aria-pressed={selected === i}
-                    className={cn(
-                      'flex cursor-pointer items-center justify-center rounded-lg border py-3 text-2xl transition-all',
-                      selected === i
-                        ? 'border-accent-500/70 bg-accent-500/10 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]'
-                        : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-600 hover:bg-zinc-900',
-                    )}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={tile.r ? { transform: `rotate(${tile.r}deg)` } : undefined}
-                    >
-                      {tile.g}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              {/* Honeypot: invisible to humans, irresistible to autofill bots. */}
-              <input
-                type="text"
-                tabIndex={-1}
+                Security question
+              </label>
+              <Input
+                id="token-question"
+                placeholder="e.g. What street did I grow up on?"
+                value={question}
+                maxLength={140}
+                onChange={(e) => setQuestion(e.target.value)}
                 autoComplete="off"
-                aria-hidden="true"
-                placeholder="Leave this empty"
-                className="pointer-events-none absolute h-px w-px opacity-0"
-                onChange={() => undefined}
-                value=""
               />
-              {(challengeFailed || failCount >= 2) && (
-                <button
-                  type="button"
-                  onClick={() => setUseTurnstile(true)}
-                  className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
-                >
-                  Having trouble? Use the alternative check
-                </button>
-              )}
-            </>
-          ) : (
-            <div className="mt-1.5">
-              <p className="text-xs text-zinc-600">
-                {challengeLoading ? 'loading…' : 'Could not load the human-check.'}
-              </p>
-              {!challengeLoading && (
-                <div className="mt-2 flex flex-wrap gap-3">
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="token-answer"
+                className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
+              >
+                Answer <span className="text-zinc-700 normal-case">(case doesn’t matter)</span>
+              </label>
+              <Input
+                id="token-answer"
+                type="password"
+                placeholder="Something only you know"
+                value={answer}
+                maxLength={100}
+                onChange={(e) => setAnswer(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+
+            <Button type="submit" variant="accent">
+              Continue
+              <ArrowRight />
+            </Button>
+          </motion.form>
+        ) : (
+          <motion.form
+            key="gen-step2"
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 10 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            onSubmit={(e) => void handleCreate(e)}
+            className="flex flex-col gap-3"
+          >
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="token-label"
+                className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
+              >
+                Nickname <span className="text-zinc-700 normal-case">(optional)</span>
+              </label>
+              <Input
+                id="token-label"
+                placeholder="e.g. laptop"
+                value={label}
+                maxLength={40}
+                onChange={(e) => setLabel(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="token-hint"
+                className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
+              >
+                Hint{' '}
+                <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
+              </label>
+              <Input
+                id="token-hint"
+                placeholder="e.g. the one with the blue door"
+                value={hint}
+                maxLength={200}
+                onChange={(e) => setHint(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
+              <div className="flex items-center gap-2">
+                <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
+                  {useTurnstile ? 'Human-check' : 'Tile puzzle (fallback)'}
+                </p>
+                {!useTurnstile && (
                   <button
                     type="button"
                     onClick={() => void loadChallenge()}
-                    className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                    disabled={challengeLoading}
+                    aria-label="New challenge"
+                    title="New challenge"
+                    className="ml-auto cursor-pointer rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
                   >
-                    Retry
+                    <RefreshCw className={cn('size-3.5', challengeLoading && 'animate-spin')} />
                   </button>
+                )}
+              </div>
+
+              {useTurnstile ? (
+                <div className="mt-2">
+                  <TurnstileWidget
+                    key={turnstileKey}
+                    onVerify={setTurnstileToken}
+                    onExpire={() => setTurnstileToken(null)}
+                  />
                   <button
                     type="button"
-                    onClick={() => setUseTurnstile(true)}
-                    className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                    onClick={() => {
+                      setUseTurnstile(false);
+                      setTurnstileToken(null);
+                      void loadChallenge();
+                    }}
+                    className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
                   >
-                    Use the alternative check
+                    Back to the tile puzzle
                   </button>
+                </div>
+              ) : challenge ? (
+                <>
+                  <p className="mt-1 text-[13px] font-medium text-zinc-200">
+                    {challenge.instruction || challenge.question || 'Tap the odd one out'}
+                  </p>
+                  <div
+                    role="group"
+                    aria-label={challenge.instruction || 'Human-check: tap the odd tile'}
+                    className="mt-2.5 grid grid-cols-3 gap-2"
+                    onPointerMove={() => {
+                      interactionsRef.current += 1;
+                    }}
+                  >
+                    {challenge.tiles.map((tile, i) => (
+                      <button
+                        key={`${challenge.nonce}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          interactionsRef.current += 1;
+                          setSelected(i);
+                        }}
+                        onKeyDown={() => {
+                          interactionsRef.current += 1;
+                        }}
+                        aria-label={`Tile ${i + 1}: ${tile.label}`}
+                        aria-pressed={selected === i}
+                        className={cn(
+                          'flex cursor-pointer items-center justify-center rounded-lg border py-3 text-2xl transition-all',
+                          selected === i
+                            ? 'border-accent-500/70 bg-accent-500/10 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]'
+                            : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-600 hover:bg-zinc-900',
+                        )}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={tile.r ? { transform: `rotate(${tile.r}deg)` } : undefined}
+                        >
+                          {tile.g}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Honeypot: invisible to humans, irresistible to autofill bots. */}
+                  <input
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    aria-hidden="true"
+                    placeholder="Leave this empty"
+                    className="pointer-events-none absolute h-px w-px opacity-0"
+                    onChange={() => undefined}
+                    value=""
+                  />
+                  {(challengeFailed || failCount >= 2) && (
+                    <button
+                      type="button"
+                      onClick={() => setUseTurnstile(true)}
+                      className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
+                    >
+                      Having trouble? Use the alternative check
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="mt-1.5">
+                  <p className="text-xs text-zinc-600">
+                    {challengeLoading ? 'loading…' : 'Could not load the human-check.'}
+                  </p>
+                  {!challengeLoading && (
+                    <div className="mt-2 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void loadChallenge()}
+                        className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                      >
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUseTurnstile(true)}
+                        className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+                      >
+                        Use the alternative check
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
-        </div>
 
-        <Button
-          type="submit"
-          variant="accent"
-          disabled={creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)}
-        >
-          {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
-          {creating ? 'Creating…' : 'Create my token'}
-        </Button>
-      </form>
+            <Button
+              type="submit"
+              variant="accent"
+              disabled={creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)}
+            >
+              {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
+              {creating ? 'Creating…' : 'Create my token'}
+            </Button>
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="cursor-pointer text-center text-xs text-zinc-600 hover:text-zinc-300"
+            >
+              Back to question
+            </button>
+          </motion.form>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function StepDot({ label, active, done }: { label: string; active: boolean; done: boolean }) {
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-1.5 text-[11px] transition-colors duration-200',
+        active ? 'text-accent-300' : done ? 'text-zinc-400' : 'text-zinc-600',
+      )}
+    >
+      <span
+        className={cn(
+          'size-1.5 rounded-full transition-colors duration-200',
+          active ? 'bg-accent-400' : done ? 'bg-zinc-500' : 'bg-zinc-800',
+        )}
+      />
+      {label}
+    </span>
   );
 }
 

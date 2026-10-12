@@ -46,7 +46,7 @@ export const SHORTCUT_LABELS: Record<ShortcutId, string> = {
   togglePreview: 'Toggle Write / Preview',
   toggleHistory: 'Toggle version history',
   openPalette: 'Command palette',
-  focusSearch: 'Focus file search',
+  focusSearch: 'Focus note search',
 };
 
 const OVERRIDES_KEY = 'shortcut-overrides';

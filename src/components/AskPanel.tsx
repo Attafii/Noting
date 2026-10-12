@@ -206,7 +206,7 @@ export function AskPanel({ onUnauthorized, onOpenDocument, onOpenNote }: AskPane
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.18 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 className="flex flex-col gap-2 rounded-xl border border-zinc-800/70 bg-zinc-900/50 p-3.5"
               >
                 <p className="text-[13px] font-medium text-zinc-100">{item.question}</p>
