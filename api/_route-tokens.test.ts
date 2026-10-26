@@ -1,7 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const originalSelfService = process.env.PUBLIC_SELF_SERVICE_TOKENS;
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { query, rateLimit, verifyChallenge } = vi.hoisted(() => ({
   query: vi.fn(),
@@ -53,40 +51,50 @@ const validBody = {
   challenge: { selected: 0 },
 };
 
-afterEach(() => {
-  if (originalSelfService === undefined) delete process.env.PUBLIC_SELF_SERVICE_TOKENS;
-  else process.env.PUBLIC_SELF_SERVICE_TOKENS = originalSelfService;
-});
-
 beforeEach(() => {
   query.mockReset();
   rateLimit.mockReset();
   verifyChallenge.mockReset();
   rateLimit.mockResolvedValue(true);
   verifyChallenge.mockReturnValue(true);
-  process.env.PUBLIC_SELF_SERVICE_TOKENS = 'false';
 });
 
-describe('invite-only token creation', () => {
-  it('rejects creation without an invite code', async () => {
+describe('token creation (open self-service)', () => {
+  it('mints a token without any invite code', async () => {
+    query.mockResolvedValueOnce([]);
     const res = response();
     await handler(request(validBody), res as unknown as VercelResponse);
-    expect(res.statusCode).toBe(403);
-    expect(query).not.toHaveBeenCalled();
-  });
-
-  it('consumes an invite and returns the one-time recovery code', async () => {
-    query.mockResolvedValueOnce([{ id: 'invite-1' }]).mockResolvedValueOnce([]);
-    const res = response();
-    await handler(
-      request({ ...validBody, invite_code: 'invite-code' }),
-      res as unknown as VercelResponse,
-    );
     expect(res.statusCode).toBe(201);
     expect(res.body).toMatchObject({
       token_plaintext: 'ntk_test-token',
       recovery_code: 'rec_test_code',
+      user_id: 'u_test',
     });
-    expect(query.mock.calls[0][0]).toContain('workspace_invites');
+    expect(query.mock.calls[0][0]).toContain('INSERT INTO access_tokens');
+  });
+
+  it('ignores a stray invite_code field instead of rejecting', async () => {
+    query.mockResolvedValueOnce([]);
+    const res = response();
+    await handler(
+      request({ ...validBody, invite_code: 'inv_whatever' }),
+      res as unknown as VercelResponse,
+    );
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('rejects when the human-check fails', async () => {
+    verifyChallenge.mockReturnValue(false);
+    const res = response();
+    await handler(request(validBody), res as unknown as VercelResponse);
+    expect(res.statusCode).toBe(400);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('validates the question length', async () => {
+    const res = response();
+    await handler(request({ ...validBody, question: 'a' }), res as unknown as VercelResponse);
+    expect(res.statusCode).toBe(400);
+    expect(query).not.toHaveBeenCalled();
   });
 });

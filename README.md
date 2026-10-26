@@ -20,7 +20,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 - Light mode + accent picker (gold/emerald/cobalt) + density, resizable/collapsible layout, mobile bottom bar, Home dashboard, onboarding tour, `/welcome` landing page, full `/settings` page (appearance, editor prefs, shortcut customizer, storage usage)
 - Cross-device conflict detection — versioned writes, mutation IDs, and a "Keep mine / Load theirs / Keep both" dialog instead of silent overwrites
 - Encrypted per-user offline outbox in IndexedDB with reconnect replay and pending-sync protection
-- Short-lived HttpOnly workspace sessions, one-time recovery codes, token revocation, and optional invite-only self-service
+- Short-lived HttpOnly workspace sessions, one-time recovery codes, token revocation, and standalone invite codes (`/invite` to redeem, `/admin` to create — token creation is open to everyone)
 - Version history (last 50 revisions per note) with one-click restore + undo
 - Multi-file parallel uploads with progress, file search, sizes, previews, download, trash (30-day restore window)
 - "Ask" Q&A with scope tabs — search indexed documents, plaintext notes, or both; answers cite sources (document chips open the preview, note chips open the note), semantic search with keyword fallback
@@ -42,7 +42,6 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
    - `CRON_SECRET` — bearer secret for the daily `/api/cron-purge` retention sweep (Vercel Cron sends it automatically); generate like `GLOBAL_SECRET_TOKEN`
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
    - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
-   - `PUBLIC_SELF_SERVICE_TOKENS=true` — explicitly enable public token creation; production defaults to invite-only/disabled
    - Optional limits: `MAX_STORAGE_BYTES`, `MAX_FILE_COUNT`, `MAX_NOTES`, and `MAX_AI_CALLS_PER_DAY`
    - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → widget → Settings → Allowed hostnames `noting.attafii.dev` (+ `noting-notes.vercel.app` for the old URL, + `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget. After any domain move you must add the new hostname in that list AND set `TURNSTILE_ALLOWED_HOSTNAMES` (or rely on the updated defaults) — otherwise the widget shows a hostname error and `/api/tokens` rejects its tokens.
 3. Database migrations (the runner records checksums and skips completed files):
@@ -53,7 +52,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
    - `npm run backfill:owner`
    - `npm run backfill:owner -- --apply`
    - Queue indexing for adopted files with `npm run reindex:queue -- --apply`.
-5. For an invite-only deployment, create one-time codes with `npm run create:invite -- <code> [valid-days]`; set `PUBLIC_SELF_SERVICE_TOKENS=false` in production.
+5. Optional — invites: create codes at `/admin` (paste your `GLOBAL_SECRET_TOKEN`) or via `npm run create:invite -- <code> [valid-days]`; share them for redemption at `/invite`. Invites never gate token creation.
 6. Run: `npm run dev` → open `http://localhost:5173/`
    - The dev server includes an API bridge that executes the Vercel functions locally — no Vercel CLI needed.
    - Tokens are kept in tab memory; authenticated API calls use a short-lived HttpOnly session cookie.
@@ -102,17 +101,19 @@ Data endpoints accept the HttpOnly `noting_session` cookie. During the transitio
 | GET/POST/DELETE       | `/api/shares`        | Manage the caller's share links: list (`?note_id=`), mint (`{ note_id, days }`, plaintext token returned once), revoke (`?id=`) — plaintext notes only                                                                                                                                          |
 | GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                                                                                                                                                       |
 | GET                   | `/api/cron-purge`    | Daily retention sweep (Vercel Cron, `Authorization: Bearer CRON_SECRET`): trash >30d, buckets >2h, sessions/invites >1d                                                                                                                                                                         |
-| POST                  | `/api/tokens`        | Invite/self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                                                                                                                                                           |
+| POST                  | `/api/tokens`        | Open self-service mint (human-check OR Turnstile; returns `ntk_…` and `rec_…` once)                                                                                                                                                                                                             |
+| POST                  | `/api/invite-redeem` | Redeem an invite code (human-check; consumes the single-use code, generic 403 for invalid/used/expired; mints nothing)                                                                                                                                                                          |
+| GET/POST              | `/api/invites`       | Admin invite management (`x-bridge-token: GLOBAL_SECRET_TOKEN`; GET lists status/expiry, POST `{valid_days}` creates a code — returned once, only its hash is stored; 404 for everyone else)                                                                                                    |
 
-Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint, 20/min share management, 30/min share reads.
+Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint, 5/min invite redeem, 30/min invite admin, 20/min share management, 30/min share reads.
 
 ## Deployment (Vercel)
 
-Set `GLOBAL_SECRET_TOKEN`, `CHALLENGE_SIGNING_SECRET`, `CRON_SECRET`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. Keep public token creation disabled unless `PUBLIC_SELF_SERVICE_TOKENS=true` is intentionally configured. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, security headers, and a daily `04:00 UTC` retention cron (`/api/cron-purge`, authenticated by `CRON_SECRET`) — run `npm run purge:retention` manually only as a fallback outside Vercel.
+Set `GLOBAL_SECRET_TOKEN`, `CHALLENGE_SIGNING_SECRET`, `CRON_SECRET`, `NEON_CONNECTION_STRING`, and `OPENROUTER_API_KEY` in the Vercel project dashboard. Public token creation needs no configuration — it is open to anyone who passes the human-check. For the human-check fallback, also set `TURNSTILE_SECRET_KEY` (server-only) and build with `VITE_TURNSTILE_SITEKEY` (public). `vercel.json` handles SPA rewrites, API passthrough, upload memory, security headers, and a daily `04:00 UTC` retention cron (`/api/cron-purge`, authenticated by `CRON_SECRET`) — run `npm run purge:retention` manually only as a fallback outside Vercel.
 
 ## Security model
 
-Each workspace is isolated by a high-entropy access token, security answer, and one-time recovery code. After unlock, the browser exchanges them for a short-lived HttpOnly session; the token and answer are not persisted in browser storage. Production token creation is disabled unless explicitly enabled.
+Each workspace is isolated by a high-entropy access token, security answer, and one-time recovery code. After unlock, the browser exchanges them for a short-lived HttpOnly session; the token and answer are not persisted in browser storage. Token creation is open self-service behind the human-check — invites are an optional standalone feature, never a gate.
 
 - Session cookies are `HttpOnly`, `SameSite=Strict`, scoped to the workspace, and revocable from the lock button.
 - Note writes use content versions, mutation IDs, transactional revisions, and conflict recovery; stale devices cannot silently overwrite newer content.

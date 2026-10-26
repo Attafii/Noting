@@ -784,6 +784,79 @@ export function mintToken(input: {
   return publicRequest<MintResult>('/api/tokens', input);
 }
 
+// ---------------------------------------------------------------------------
+// Invites — standalone feature, never a gate on token creation. Redeeming a
+// code just consumes it and acknowledges success; the admin page mints and
+// lists codes (authenticated with the GLOBAL_SECRET_TOKEN, kept in memory
+// only, never persisted).
+// ---------------------------------------------------------------------------
+
+export interface InviteInfo {
+  id: number;
+  status: 'active' | 'used' | 'expired';
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+}
+
+export function redeemInvite(input: {
+  invite_code: string;
+  /** Built-in visual check solution (primary). */
+  challenge?: ChallengeSolution;
+  /** Cloudflare Turnstile client token (fallback only). */
+  turnstileToken?: string;
+}): Promise<{ ok: true }> {
+  return publicRequest<{ ok: true }>('/api/invite-redeem', input);
+}
+
+/**
+ * Admin request helper — presents the admin secret as `x-bridge-token`.
+ * The secret lives in the caller's memory only; nothing is persisted.
+ */
+async function adminRequest<T>(path: string, secret: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-noting-client': getSessionId(),
+        'x-bridge-token': secret,
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+  if (!res.ok) {
+    const body = await readJson(res).catch(() => null);
+    // 404 means the admin secret didn't match (the route is invisible to
+    // non-admins) — say so plainly instead of a generic 404.
+    if (res.status === 404) {
+      throw new ApiError(401, 'Admin secret is not recognized');
+    }
+    throw new ApiError(res.status, errorFromBody(body, `Request failed (${res.status})`));
+  }
+  return (await readJson(res)) as T;
+}
+
+export function adminListInvites(secret: string): Promise<{ invites: InviteInfo[] }> {
+  return adminRequest<{ invites: InviteInfo[] }>('/api/invites', secret);
+}
+
+export function adminCreateInvite(
+  secret: string,
+  validDays: number,
+): Promise<{ code: string; valid_days: number; expires_at: string | null }> {
+  return adminRequest<{ code: string; valid_days: number; expires_at: string | null }>(
+    '/api/invites',
+    secret,
+    { method: 'POST', body: JSON.stringify({ valid_days: validDays }) },
+  );
+}
+
 export function fetchQuestion(
   token: string,
   session_id: string,

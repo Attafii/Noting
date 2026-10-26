@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowRight,
@@ -10,23 +10,14 @@ import {
   KeyRound,
   Lightbulb,
   Loader2,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   SquareTerminal,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  ApiError,
-  createSession,
-  fetchChallenge,
-  fetchHint,
-  fetchQuestion,
-  mintToken,
-  type Challenge,
-  type ChallengeSolution,
-} from '../lib/api';
+import { ApiError, createSession, fetchHint, fetchQuestion, mintToken } from '../lib/api';
 import { getSessionId, getToken, setAnswer, setSessionActive, setToken } from '../lib/token';
+import { HumanCheck, type HumanCheckValue } from './HumanCheck';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
@@ -461,22 +452,11 @@ function GenerateForm({
   const [hint, setHint] = useState('');
   // Two calm steps: 1) question + answer, 2) optional details + human-check.
   const [step, setStep] = useState<1 | 2>(1);
-  const [challenge, setChallenge] = useState<Challenge | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [challengeLoading, setChallengeLoading] = useState(false);
+  // Human-check proof (tile puzzle or Turnstile) — owned by HumanCheck.
+  const [check, setCheck] = useState<HumanCheckValue | null>(null);
+  // Bumped after a failed attempt so HumanCheck loads a fresh challenge.
+  const [checkResetKey, setCheckResetKey] = useState(0);
   const [creating, setCreating] = useState(false);
-  const [challengeFailed, setChallengeFailed] = useState(false);
-  const [failCount, setFailCount] = useState(0);
-  // Cloudflare-first: when the sitekey is configured the Turnstile widget is
-  // the primary human-check (the tile puzzle stays as fallback). Starting in
-  // Turnstile mode also means a broken /api/challenge can no longer block
-  // token creation — no challenge is fetched until the user opts back.
-  const [useTurnstile, setUseTurnstile] = useState<boolean>(
-    () => Boolean(import.meta.env.VITE_TURNSTILE_SITEKEY) === true,
-  );
-  // Bumped to remount the widget (fresh token) after a failed/used attempt.
-  const [turnstileKey, setTurnstileKey] = useState(0);
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [result, setResult] = useState<{
     token: string;
     recoveryCode: string;
@@ -485,41 +465,6 @@ function GenerateForm({
   const [copied, setCopied] = useState(false);
   const [recoveryCopied, setRecoveryCopied] = useState(false);
   const [savedAck, setSavedAck] = useState(false);
-  // Timing + interaction signals for the human-check (measured from render).
-  const issuedAtRef = useRef(0);
-  const interactionsRef = useRef(0);
-
-  const loadChallenge = useCallback(async () => {
-    setChallengeLoading(true);
-    try {
-      const ch = await fetchChallenge();
-      setChallenge(Array.isArray(ch.tiles) && ch.tiles.length > 0 ? ch : null);
-      if (!Array.isArray(ch.tiles) || ch.tiles.length === 0) {
-        setChallengeFailed(true);
-      } else {
-        setChallengeFailed(false);
-      }
-      setSelected(null);
-      interactionsRef.current = 0;
-      issuedAtRef.current = Date.now();
-    } catch (e) {
-      setChallenge(null);
-      setChallengeFailed(true);
-      toast.error(
-        e instanceof Error ? e.message : 'Could not load the human-check — retry in a moment',
-      );
-    } finally {
-      setChallengeLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Only fetch the tile puzzle when it is actually shown. In Turnstile
-    // mode no /api/challenge request fires at all.
-    if (useTurnstile) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadChallenge();
-  }, [loadChallenge, useTurnstile]);
 
   function handleStepOne(event: FormEvent) {
     event.preventDefault();
@@ -552,29 +497,9 @@ function GenerateForm({
       toast.error('Nickname must be 0–40 characters');
       return;
     }
-
-    let solution: ChallengeSolution | undefined;
-    let fallbackToken: string | undefined;
-    if (useTurnstile) {
-      if (!turnstileToken) {
-        toast.error('Complete the alternative check first');
-        return;
-      }
-      fallbackToken = turnstileToken;
-    } else {
-      if (!challenge || selected === null) {
-        toast.error(challenge ? 'Tap the odd tile first' : 'Wait for the human-check to load');
-        return;
-      }
-      solution = {
-        nonce: challenge.nonce,
-        expires_at: challenge.expires_at,
-        sig: challenge.sig,
-        selected,
-        elapsed_ms: Date.now() - issuedAtRef.current,
-        honeypot: '',
-        interactions: interactionsRef.current,
-      };
+    if (!check?.challenge && !check?.turnstileToken) {
+      toast.error('Complete the human-check first');
+      return;
     }
 
     setCreating(true);
@@ -584,14 +509,11 @@ function GenerateForm({
         question: question.trim(),
         answer: answer.trim(),
         hint: hint.trim() || undefined,
-        challenge: solution,
-        turnstileToken: fallbackToken,
+        challenge: check.challenge,
+        turnstileToken: check.turnstileToken,
       });
       // The form answer is wiped immediately — it is never stored.
       setAnswer('');
-      setSelected(null);
-      setTurnstileToken(null);
-      setFailCount(0);
       setResult({
         token: res.token_plaintext,
         recoveryCode: res.recovery_code,
@@ -599,21 +521,16 @@ function GenerateForm({
       });
     } catch (err) {
       if (err instanceof Error && err.message.includes('Human-check')) {
-        const next = failCount + 1;
-        setFailCount(next);
-        setSelected(null);
-        setTurnstileToken(null);
-        // Fresh check for the retry: new tiles, or a remounted widget (the
-        // spent Turnstile token can't be reused).
-        if (!useTurnstile) await loadChallenge();
-        else setTurnstileKey((k) => k + 1);
+        // Fresh check for the retry: HumanCheck reloads tiles or remounts
+        // the Turnstile widget (a spent token can't be reused).
+        setCheck(null);
+        setCheckResetKey((k) => k + 1);
         toast.error(err instanceof Error ? err.message : 'Could not create token');
       } else if (err instanceof ApiError && err.status === 503) {
         // Sleeping database, not a form/check problem: your inputs are kept,
         // only the human-check is refreshed (its token may be spent).
-        setSelected(null);
-        setTurnstileToken(null);
-        if (useTurnstile) setTurnstileKey((k) => k + 1);
+        setCheck(null);
+        setCheckResetKey((k) => k + 1);
         toast.error('Database is waking up — wait ~30 seconds, then retry', {
           duration: 8000,
         });
@@ -730,13 +647,9 @@ function GenerateForm({
             setHint('');
             setLabel('');
             setStep(1);
-            setSelected(null);
-            setFailCount(0);
-            setTurnstileToken(null);
-            // Stay in the working mode: fresh widget for Turnstile, fresh
-            // tiles otherwise (no forced /api/challenge call in Turnstile mode).
-            if (useTurnstile) setTurnstileKey((k) => k + 1);
-            else void loadChallenge();
+            // Fresh human-check for the next token.
+            setCheck(null);
+            setCheckResetKey((k) => k + 1);
           }}
           className="cursor-pointer text-center text-xs text-zinc-600 hover:text-zinc-300"
         >
@@ -848,7 +761,9 @@ function GenerateForm({
                 className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase"
               >
                 Hint{' '}
-                <span className="text-zinc-700 normal-case">(optional, shown once per session)</span>
+                <span className="text-zinc-700 normal-case">
+                  (optional, shown once per session)
+                </span>
               </label>
               <Input
                 id="token-hint"
@@ -860,138 +775,12 @@ function GenerateForm({
               />
             </div>
 
-            <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 px-3.5 py-3">
-              <div className="flex items-center gap-2">
-                <p className="font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
-                  {useTurnstile ? 'Human-check' : 'Tile puzzle (fallback)'}
-                </p>
-                {!useTurnstile && (
-                  <button
-                    type="button"
-                    onClick={() => void loadChallenge()}
-                    disabled={challengeLoading}
-                    aria-label="New challenge"
-                    title="New challenge"
-                    className="ml-auto cursor-pointer rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-40"
-                  >
-                    <RefreshCw className={cn('size-3.5', challengeLoading && 'animate-spin')} />
-                  </button>
-                )}
-              </div>
-
-              {useTurnstile ? (
-                <div className="mt-2">
-                  <TurnstileWidget
-                    key={turnstileKey}
-                    onVerify={setTurnstileToken}
-                    onExpire={() => setTurnstileToken(null)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUseTurnstile(false);
-                      setTurnstileToken(null);
-                      void loadChallenge();
-                    }}
-                    className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
-                  >
-                    Back to the tile puzzle
-                  </button>
-                </div>
-              ) : challenge ? (
-                <>
-                  <p className="mt-1 text-[13px] font-medium text-zinc-200">
-                    {challenge.instruction || challenge.question || 'Tap the odd one out'}
-                  </p>
-                  <div
-                    role="group"
-                    aria-label={challenge.instruction || 'Human-check: tap the odd tile'}
-                    className="mt-2.5 grid grid-cols-3 gap-2"
-                    onPointerMove={() => {
-                      interactionsRef.current += 1;
-                    }}
-                  >
-                    {challenge.tiles.map((tile, i) => (
-                      <button
-                        key={`${challenge.nonce}-${i}`}
-                        type="button"
-                        onClick={() => {
-                          interactionsRef.current += 1;
-                          setSelected(i);
-                        }}
-                        onKeyDown={() => {
-                          interactionsRef.current += 1;
-                        }}
-                        aria-label={`Tile ${i + 1}: ${tile.label}`}
-                        aria-pressed={selected === i}
-                        className={cn(
-                          'flex cursor-pointer items-center justify-center rounded-lg border py-3 text-2xl transition-all',
-                          selected === i
-                            ? 'border-accent-500/70 bg-accent-500/10 shadow-[0_0_0_1px_rgb(255_255_255/0.06)]'
-                            : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-600 hover:bg-zinc-900',
-                        )}
-                      >
-                        <span
-                          aria-hidden="true"
-                          style={tile.r ? { transform: `rotate(${tile.r}deg)` } : undefined}
-                        >
-                          {tile.g}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                  {/* Honeypot: invisible to humans, irresistible to autofill bots. */}
-                  <input
-                    type="text"
-                    tabIndex={-1}
-                    autoComplete="off"
-                    aria-hidden="true"
-                    placeholder="Leave this empty"
-                    className="pointer-events-none absolute h-px w-px opacity-0"
-                    onChange={() => undefined}
-                    value=""
-                  />
-                  {(challengeFailed || failCount >= 2) && (
-                    <button
-                      type="button"
-                      onClick={() => setUseTurnstile(true)}
-                      className="mt-2 cursor-pointer text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-300"
-                    >
-                      Having trouble? Use the alternative check
-                    </button>
-                  )}
-                </>
-              ) : (
-                <div className="mt-1.5">
-                  <p className="text-xs text-zinc-600">
-                    {challengeLoading ? 'loading…' : 'Could not load the human-check.'}
-                  </p>
-                  {!challengeLoading && (
-                    <div className="mt-2 flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void loadChallenge()}
-                        className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
-                      >
-                        Retry
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setUseTurnstile(true)}
-                        className="cursor-pointer text-xs text-zinc-300 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
-                      >
-                        Use the alternative check
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <HumanCheck onValue={setCheck} resetKey={checkResetKey} />
 
             <Button
               type="submit"
               variant="accent"
-              disabled={creating || (useTurnstile ? !turnstileToken : !challenge || selected === null)}
+              disabled={creating || (!check?.challenge && !check?.turnstileToken)}
             >
               {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
               {creating ? 'Creating…' : 'Create my token'}
@@ -1027,181 +816,4 @@ function StepDot({ label, active, done }: { label: string; active: boolean; done
       {label}
     </span>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Turnstile widget (Cloudflare, free Managed mode). Primary human-check when
-// VITE_TURNSTILE_SITEKEY is configured — the script is injected only when
-// the widget mounts, and the tile puzzle remains as fallback.
-// ---------------------------------------------------------------------------
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        container: string | HTMLElement,
-        params: {
-          sitekey: string;
-          theme?: 'light' | 'dark' | 'auto';
-          callback?: (token: string) => void;
-          'expired-callback'?: () => void;
-          'error-callback'?: (code?: string | number) => void;
-        },
-      ) => string;
-      reset?: (widgetId?: string) => void;
-      remove?: (widgetId?: string) => void;
-    };
-  }
-}
-
-const TURNSTILE_SCRIPT_ID = 'cf-turnstile-script';
-// render=explicit: the widget is always rendered manually via
-// turnstile.render(). This stops api.js from auto-scanning the DOM, which
-// caused "Turnstile skipped implicit render because a widget already exists"
-// when the explicit render raced the implicit one.
-const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-
-function loadTurnstileScript(): Promise<void> {
-  if (typeof document === 'undefined') return Promise.reject(new Error('No document'));
-  if (window.turnstile) return Promise.resolve();
-  const existing = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null;
-  if (existing) {
-    // Script tag from an earlier mount that already finished loading — the
-    // load event below would never fire again, so resolve immediately.
-    if (existing.dataset.loaded === '1') return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error('Failed to load check')), {
-        once: true,
-      });
-    });
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.id = TURNSTILE_SCRIPT_ID;
-    script.src = TURNSTILE_SRC;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      script.dataset.loaded = '1';
-      resolve();
-    };
-    script.onerror = () => reject(new Error('Failed to load the alternative check'));
-    document.head.appendChild(script);
-  });
-}
-
-function TurnstileWidget({
-  onVerify,
-  onExpire,
-}: {
-  onVerify: (token: string) => void;
-  onExpire: () => void;
-}) {
-  const sitekey = import.meta.env.VITE_TURNSTILE_SITEKEY as string | undefined;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [failed, setFailed] = useState(false);
-  // Cloudflare passes an error code (e.g. hostname failures after a domain
-  // move). Kept verbatim so the message below can name the likely cause.
-  const [errorCode, setErrorCode] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!sitekey) return;
-    let cancelled = false;
-    let widgetId: string | undefined;
-    const container = containerRef.current;
-    void loadTurnstileScript()
-      .then(() => {
-        if (cancelled || !container || !window.turnstile) return;
-        // StrictMode double-mounts effects: the first mount's widget may
-        // still own this container. Tear it down first so render() never
-        // no-ops into a blank box.
-        try {
-          if (widgetId !== undefined) window.turnstile.remove?.(widgetId);
-        } catch {
-          /* ignore */
-        }
-        // Belt and braces: if an iframe survived cleanup (stale remount),
-        // drop it before the explicit render.
-        if (container.querySelector('iframe')) container.replaceChildren();
-        else container.innerHTML = '';
-        widgetId = window.turnstile.render(container, {
-          sitekey,
-          theme: 'dark',
-          callback: (token: string) => {
-            if (!cancelled) onVerify(token);
-          },
-          'expired-callback': () => {
-            if (!cancelled) onExpire();
-          },
-          'error-callback': (code?: string | number) => {
-            if (cancelled) return;
-            setErrorCode(code === undefined || code === null ? null : String(code));
-            setFailed(true);
-          },
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-      try {
-        if (widgetId !== undefined) window.turnstile?.remove?.(widgetId);
-      } catch {
-        /* ignore cleanup errors */
-      }
-      // Leave a clean container so the next mount renders fresh instead of
-      // hitting "a widget already exists in this container".
-      try {
-        container?.replaceChildren();
-      } catch {
-        /* ignore cleanup errors */
-      }
-    };
-    // onVerify/onExpire are stable setState wrappers — render once per mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sitekey]);
-
-  if (!sitekey) {
-    return (
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-        The alternative check isn’t configured on this deployment (missing site key). Please use the
-        tile puzzle instead.
-      </p>
-    );
-  }
-  if (failed) {
-    const code = (errorCode ?? '').toLowerCase();
-    const looksLikeHostname =
-      code.includes('hostname') || code.includes('110200') || code.includes('200100');
-    return (
-      <div className="mt-1.5 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
-        {looksLikeHostname ? (
-          <>
-            This domain isn’t allowed for the Turnstile widget — add{' '}
-            <code className="font-mono">{window.location.hostname}</code> under Cloudflare dashboard
-            → Turnstile → widget → Settings → Allowed hostnames, and include it in{' '}
-            <code className="font-mono">TURNSTILE_ALLOWED_HOSTNAMES</code>, then redeploy. The tile
-            puzzle below still works.
-          </>
-        ) : (
-          <>
-            Couldn’t load the alternative check
-            {errorCode ? (
-              <>
-                {' '}
-                (code <code className="font-mono">{errorCode}</code>)
-              </>
-            ) : null}{' '}
-            — check your connection and try the tile puzzle.
-          </>
-        )}
-      </div>
-    );
-  }
-  // NOTE: the container deliberately does NOT use the `cf-turnstile` CSS
-  // class — api.js auto-renders those implicitly, which raced our explicit
-  // render() and produced blank widgets.
-  return <div ref={containerRef} className="turnstile-slot mt-2 min-h-16" />;
 }

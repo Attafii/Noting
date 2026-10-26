@@ -24,16 +24,12 @@ function cleanStr(v: unknown, max: number): string | null {
 }
 
 /**
- * Self-service token mint. No auth, strict rate limit (~5/min bucket),
- * built-in human-check required. Generates ntk_… + u_… server-side, stores
- * only hashes, and returns the token and recovery code once.
+ * Self-service token mint. No auth, no invite gate, strict rate limit
+ * (~5/min bucket), built-in human-check required. Generates ntk_… + u_…
+ * server-side, stores only hashes, and returns the token and recovery code
+ * once. Invite codes are a separate, standalone feature (see
+ * _route-invite-redeem.ts / _route-invites.ts) and never gate minting.
  */
-function selfServiceEnabled(): boolean {
-  const configured = process.env.PUBLIC_SELF_SERVICE_TOKENS;
-  if (configured !== undefined) return configured === 'true';
-  return process.env.NODE_ENV !== 'production';
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -43,7 +39,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const body = (req.body ?? {}) as {
     label?: unknown;
-    invite_code?: unknown;
     question?: unknown;
     answer?: unknown;
     hint?: unknown;
@@ -98,12 +93,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(400).json({ error: 'label must be 0–40 characters' });
     return;
   }
-  const inviteCode = cleanStr(body.invite_code ?? '', 200) ?? '';
-  const inviteRequired = !selfServiceEnabled();
-  if (inviteRequired && !inviteCode) {
-    res.status(403).json({ error: 'An invite code is required on this deployment' });
-    return;
-  }
 
   const tokenPlaintext = newTokenPlaintext();
   const userId = newUserId();
@@ -123,26 +112,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('tokens mint: database unavailable (NEON_CONNECTION_STRING)', e);
     res.status(503).json({ error: 'Database unavailable — try again in a moment' });
     return;
-  }
-  let inviteReserved = false;
-  if (inviteRequired) {
-    try {
-      const inviteRows = await sql.query(
-        `UPDATE workspace_invites SET used_at = NOW()
-         WHERE code_hash = $1 AND used_at IS NULL AND expires_at > NOW()
-         RETURNING id`,
-        [hashToken(inviteCode)],
-      );
-      if (inviteRows.length === 0) {
-        res.status(403).json({ error: 'Invite code is invalid or expired' });
-        return;
-      }
-      inviteReserved = true;
-    } catch (error) {
-      console.error('tokens mint: invite store unavailable', error);
-      res.status(503).json({ error: 'Database unavailable — try again in a moment' });
-      return;
-    }
   }
 
   // Cold-start tolerance: a sleeping Neon project drops the first query.
@@ -184,14 +153,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   if (!minted) {
-    if (inviteReserved) {
-      await sql
-        .query(
-          'UPDATE workspace_invites SET used_at = NULL WHERE code_hash = $1 AND used_at IS NOT NULL',
-          [hashToken(inviteCode)],
-        )
-        .catch(() => undefined);
-    }
     // Unreachable DB (not bad input) → 503 so the client shows "waking up".
     if (isColdStartError(lastError)) {
       res.status(503).json({ error: 'Database unavailable — try again in a moment' });

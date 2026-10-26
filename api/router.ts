@@ -9,6 +9,8 @@ import downloadHandler from './_route-download.js';
 import foldersHandler from './_route-folders.js';
 import healthHandler from './_route-health.js';
 import hintHandler from './_route-hint.js';
+import inviteRedeemHandler from './_route-invite-redeem.js';
+import invitesHandler from './_route-invites.js';
 import noteHandler from './_route-note.js';
 import notesHandler from './_route-notes.js';
 import revisionsHandler from './_route-revisions.js';
@@ -24,7 +26,7 @@ type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void
 
 /**
  * Single-function API router (Vercel Hobby plans allow max 12 Serverless
- * Functions per deployment; the app has 15 endpoints). Production rewrites
+ * Functions per deployment; the app has 21 endpoints). Production rewrites
  * `/api/<name>` → `/api/router?route=<name>` (see vercel.json); local dev
  * resolves the `_route-*` modules directly via dev-api.ts.
  *
@@ -51,6 +53,8 @@ const HANDLERS: Record<string, Handler> = {
   folders: foldersHandler,
   health: healthHandler,
   hint: hintHandler,
+  'invite-redeem': inviteRedeemHandler,
+  invites: invitesHandler,
   note: noteHandler,
   notes: notesHandler,
   revisions: revisionsHandler,

@@ -9,6 +9,8 @@
     { "source": "/api/folders", "destination": "/api/router?route=folders" },
     { "source": "/api/health", "destination": "/api/router?route=health" },
     { "source": "/api/hint", "destination": "/api/router?route=hint" },
+    { "source": "/api/invite-redeem", "destination": "/api/router?route=invite-redeem" },
+    { "source": "/api/invites", "destination": "/api/router?route=invites" },
     { "source": "/api/note", "destination": "/api/router?route=note" },
     { "source": "/api/notes", "destination": "/api/router?route=notes" },
     { "source": "/api/revisions", "destination": "/api/router?route=revisions" },

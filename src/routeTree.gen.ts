@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SRouteImport } from './routes/s'
+import { Route as InviteRouteImport } from './routes/invite'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -29,6 +31,16 @@ const SRoute = SRouteImport.update({
   path: '/s',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteRoute = InviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -37,12 +49,16 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/invite': typeof InviteRoute
   '/s': typeof SRoute
   '/settings': typeof SettingsRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/invite': typeof InviteRoute
   '/s': typeof SRoute
   '/settings': typeof SettingsRoute
   '/welcome': typeof WelcomeRoute
@@ -50,20 +66,24 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/invite': typeof InviteRoute
   '/s': typeof SRoute
   '/settings': typeof SettingsRoute
   '/welcome': typeof WelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/s' | '/settings' | '/welcome'
+  fullPaths: '/' | '/admin' | '/invite' | '/s' | '/settings' | '/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/s' | '/settings' | '/welcome'
-  id: '__root__' | '/' | '/s' | '/settings' | '/welcome'
+  to: '/' | '/admin' | '/invite' | '/s' | '/settings' | '/welcome'
+  id: '__root__' | '/' | '/admin' | '/invite' | '/s' | '/settings' | '/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
+  InviteRoute: typeof InviteRoute
   SRoute: typeof SRoute
   SettingsRoute: typeof SettingsRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -92,6 +112,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite': {
+      id: '/invite'
+      path: '/invite'
+      fullPath: '/invite'
+      preLoaderRoute: typeof InviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -104,6 +138,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
+  InviteRoute: InviteRoute,
   SRoute: SRoute,
   SettingsRoute: SettingsRoute,
   WelcomeRoute: WelcomeRoute,
