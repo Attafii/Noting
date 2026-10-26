@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 export type ThemeMode = 'dark' | 'light';
-export type AccentName = 'gold' | 'emerald' | 'cobalt';
+export type AccentName = 'ember' | 'gold' | 'emerald' | 'cobalt';
 export type DensityName = 'comfortable' | 'compact';
 
 export interface ThemeState {
@@ -12,7 +12,11 @@ export interface ThemeState {
 
 const STORAGE_KEY = 'noting-theme';
 
-const DEFAULTS: ThemeState = { mode: 'dark', accent: 'gold', density: 'comfortable' };
+const DEFAULTS: ThemeState = { mode: 'dark', accent: 'ember', density: 'comfortable' };
+
+function isAccent(value: unknown): value is AccentName {
+  return value === 'ember' || value === 'gold' || value === 'emerald' || value === 'cobalt';
+}
 
 function read(): ThemeState {
   try {
@@ -21,7 +25,9 @@ function read(): ThemeState {
     const parsed = JSON.parse(raw) as Partial<ThemeState>;
     return {
       mode: parsed.mode === 'light' ? 'light' : 'dark',
-      accent: parsed.accent === 'emerald' || parsed.accent === 'cobalt' ? parsed.accent : 'gold',
+      // Legacy stored themes predate ember — they keep their explicit choice;
+      // anything unrecognized falls back to the brand default.
+      accent: isAccent(parsed.accent) ? parsed.accent : DEFAULTS.accent,
       density: parsed.density === 'compact' ? 'compact' : 'comfortable',
     };
   } catch {

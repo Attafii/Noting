@@ -5,12 +5,29 @@
     'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono:
     'JetBrains Mono Variable', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Editorial display face for hero/page headings (ink & ember brand). */
+  --font-display: 'Newsreader Variable', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
 
-  /* Restrained warm accent for primary actions in the stealth-luxe theme. */
-  --color-accent-300: #e7c47c;
-  --color-accent-400: #ddb25e;
-  --color-accent-500: #c99a3f;
-  --color-accent-600: #a87f30;
+  /* ---- ink & ember brand: warm near-black surfaces instead of cool zinc.
+     Same perceptual lightness steps as the original scale (contrast parity,
+     verified ≥ AA on every text pair), shifted to a warm hue. ---- */
+  --color-zinc-950: #0c0b0a; /* ink — page background */
+  --color-zinc-900: #1a1815; /* raised surfaces, cards */
+  --color-zinc-800: #292724; /* borders, hover fills */
+  --color-zinc-700: #443f39; /* strong borders */
+  --color-zinc-600: #58524a; /* decorative text */
+  --color-zinc-500: #777169; /* placeholder text */
+  --color-zinc-400: #a7a199; /* secondary text (AA on ink: 7.7) */
+  --color-zinc-300: #d7d4d1; /* tertiary text */
+  --color-zinc-200: #e6e4e1; /* body text */
+  --color-zinc-100: #f3ede4; /* paper — primary text (AA on ink: 17.1) */
+  --color-zinc-50: #faf7f2;
+
+  /* ---- ember accent (default): warm flame replacing the old gold. ---- */
+  --color-accent-300: #ff945c;
+  --color-accent-400: #fa844c;
+  --color-accent-500: #e8743b;
+  --color-accent-600: #d0570c;
 }
 
 html {
@@ -31,7 +48,7 @@ body {
 }
 
 ::selection {
-  background: rgb(221 178 94 / 0.28);
+  background: rgb(232 116 59 / 0.3);
   color: #fafafa;
 }
 
@@ -54,7 +71,7 @@ body {
 
 /* Accessible focus ring everywhere, without restyling each control. */
 :where(a, button, input, textarea, [tabindex]):focus-visible {
-  outline: 2px solid rgb(221 178 94 / 0.7);
+  outline: 2px solid rgb(232 116 59 / 0.75);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -172,7 +189,7 @@ body {
   @apply bg-zinc-900 text-zinc-200;
 }
 .markdown-body input[type='checkbox'] {
-  accent-color: #ddb25e;
+  accent-color: #e8743b;
 }
 
 /* Sonner toasts matched to the theme. */
@@ -180,7 +197,14 @@ body {
   font-family: var(--font-sans);
 }
 
-/* ---- P0 theming: accent picker ---- */
+/* ---- accent picker ----
+   Ember is the default (defined in @theme above); the rest are options. */
+[data-accent='gold'] {
+  --color-accent-300: #e7c47c;
+  --color-accent-400: #ddb25e;
+  --color-accent-500: #c99a3f;
+  --color-accent-600: #a87f30;
+}
 [data-accent='emerald'] {
   --color-accent-300: #6ee7b7;
   --color-accent-400: #34d399;
@@ -208,7 +232,7 @@ body {
   color: #1c1917;
 }
 [data-theme='light'] ::selection {
-  background: rgb(201 154 63 / 0.3);
+  background: rgb(232 116 59 / 0.3);
   color: #1c1917;
 }
 [data-theme='light'] .bg-zinc-950 {
@@ -311,4 +335,83 @@ body {
 [data-theme='light'] .markdown-body th {
   background-color: #f5f5f4;
   color: #1c1917;
+}
+
+/* ---- ink & ember brand signatures ---- */
+
+/* Editorial display headings — hero and page titles only (never body/UI). */
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+/* Film-grain overlay: procedural SVG noise, no image asset, ~3% opacity.
+   Apply on a pointer-events-none ::after layer of a relatively-positioned box. */
+.grain::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+[data-theme='light'] .grain::after {
+  opacity: 0.05;
+  mix-blend-mode: multiply;
+}
+
+/* The signature: a slow-breathing ember dot. Used in the wordmark, the
+   assistant button, active-note markers, and loading states. */
+@keyframes ember-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(232 116 59 / 0.45);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(0.86);
+    box-shadow: 0 0 0 5px rgb(232 116 59 / 0);
+  }
+}
+.ember-dot {
+  display: inline-block;
+  border-radius: 9999px;
+  background: var(--color-accent-500);
+  animation: ember-breathe 3.2s var(--motion-ease) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ember-dot {
+    animation: none;
+  }
+}
+
+/* The assistant button: a soft ember halo that breathes around the FAB
+   (the dot's glow only — the button itself keeps hover/tap transitions). */
+@keyframes ember-halo {
+  0%,
+  100% {
+    box-shadow:
+      0 8px 28px -8px rgb(232 116 59 / 0.55),
+      0 0 0 1px rgb(232 116 59 / 0.35),
+      0 0 0 0 rgb(232 116 59 / 0.4);
+  }
+  50% {
+    box-shadow:
+      0 8px 28px -8px rgb(232 116 59 / 0.55),
+      0 0 0 1px rgb(232 116 59 / 0.35),
+      0 0 0 7px rgb(232 116 59 / 0);
+  }
+}
+.ember-fab {
+  animation: ember-halo 3.2s var(--motion-ease) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ember-fab {
+    animation: none;
+  }
 }

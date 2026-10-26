@@ -292,7 +292,7 @@ export default function DocumentList({ onUnauthorized }: DocumentListProps) {
             <span className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-500">
               <PackageOpen className="size-4" />
             </span>
-            <p className="text-sm text-zinc-400">
+            <p className="font-display text-[15px] font-medium text-zinc-300">
               {view === 'files' ? 'No documents yet' : 'Trash is empty'}
             </p>
             <p className="max-w-[220px] text-xs text-zinc-600">

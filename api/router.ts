@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import aiHandler from './_route-ai.js';
 import askHandler from './_route-ask.js';
+import assistantHandler from './_route-assistant.js';
 import challengeHandler from './_route-challenge.js';
 import cronPurgeHandler from './_route-cron-purge.js';
 import documentsHandler from './_route-documents.js';
@@ -26,7 +27,7 @@ type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void
 
 /**
  * Single-function API router (Vercel Hobby plans allow max 12 Serverless
- * Functions per deployment; the app has 21 endpoints). Production rewrites
+ * Functions per deployment; the app has 22 endpoints). Production rewrites
  * `/api/<name>` → `/api/router?route=<name>` (see vercel.json); local dev
  * resolves the `_route-*` modules directly via dev-api.ts.
  *
@@ -46,6 +47,7 @@ type Handler = (req: VercelRequest, res: VercelResponse) => Promise<void> | void
 const HANDLERS: Record<string, Handler> = {
   ai: aiHandler,
   ask: askHandler,
+  assistant: assistantHandler,
   challenge: challengeHandler,
   'cron-purge': cronPurgeHandler,
   documents: documentsHandler,

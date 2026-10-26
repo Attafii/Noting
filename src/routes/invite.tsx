@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { motion } from 'motion/react';
 import { ArrowRight, BadgeCheck, Loader2, SquareTerminal, Ticket } from 'lucide-react';
 import { toast } from 'sonner';
 import { redeemInvite } from '../lib/api';
 import { HumanCheck, type HumanCheckValue } from '../components/HumanCheck';
+import { AmbientInk } from '../components/ambient/AmbientInk';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -63,7 +64,12 @@ function InvitePage() {
   }
 
   return (
-    <div className="flex min-h-[78vh] items-center justify-center px-4 py-10">
+    // `isolate` — see welcome.tsx: keeps the -z-10 shader above the root
+    // wrapper's opaque background.
+    <div className="grain relative isolate flex min-h-[78vh] items-center justify-center px-4 py-10">
+      <Suspense fallback={null}>
+        <AmbientInk />
+      </Suspense>
       <motion.div
         initial={{ opacity: 0, y: 18, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -71,11 +77,14 @@ function InvitePage() {
         className="w-full max-w-md"
       >
         <div className="mb-5 flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
             <SquareTerminal className="size-4" />
           </span>
-          <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
-          <span className="ml-auto flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-400">
+          <span className="flex items-center gap-2 font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">
+            <span className="ember-dot size-1.5" aria-hidden />
+            notes
+          </span>
+          <span className="ml-auto flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/80 px-2.5 py-1 text-[11px] text-zinc-400">
             <Ticket className="size-3" />
             invite
           </span>
@@ -94,7 +103,9 @@ function InvitePage() {
                   <BadgeCheck className="size-6" />
                 </span>
                 <div>
-                  <h1 className="text-[15px] font-semibold text-zinc-100">Invite redeemed</h1>
+                  <h1 className="font-display text-[17px] font-medium text-zinc-100">
+                    Invite redeemed
+                  </h1>
                   <p className="mt-1 text-xs leading-relaxed text-zinc-500">
                     This code has been marked as used. You can head into the app whenever you’re
                     ready.
@@ -107,7 +118,9 @@ function InvitePage() {
             ) : (
               <form onSubmit={(e) => void handleRedeem(e)} className="flex flex-col gap-4">
                 <div>
-                  <h1 className="text-[15px] font-semibold text-zinc-100">Redeem an invite</h1>
+                  <h1 className="font-display text-[17px] font-medium text-zinc-100">
+                    Redeem an invite
+                  </h1>
                   <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
                     Enter the code you were given. Redeeming marks it as used — it doesn’t create or
                     unlock a token.

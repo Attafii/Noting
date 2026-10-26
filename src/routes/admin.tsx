@@ -131,7 +131,7 @@ function AdminPage() {
           <ArrowLeft className="size-4" />
         </Link>
         <div>
-          <h1 className="text-base font-semibold text-zinc-100">Invite admin</h1>
+          <h1 className="font-display text-lg font-medium text-zinc-100">Invite admin</h1>
           <p className="font-mono text-[11px] text-zinc-500">create &amp; track invite codes</p>
         </div>
         {unlocked && (

@@ -6,6 +6,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router';
 import '@fontsource-variable/geist';
 import '@fontsource-variable/jetbrains-mono';
+import '@fontsource-variable/newsreader';
 import './styles.css';
 import { initTheme } from './lib/theme';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
@@ -37,7 +38,8 @@ createRoot(document.getElementById('root')!).render(
         <RouterProvider router={router} />
         {import.meta.env.DEV && (
           <Suspense fallback={null}>
-            <Devtools initialIsOpen={false} />
+            {/* bottom-left: the Ember assistant FAB owns bottom-right. */}
+            <Devtools initialIsOpen={false} buttonPosition="bottom-left" position="left" />
           </Suspense>
         )}
       </AppErrorBoundary>

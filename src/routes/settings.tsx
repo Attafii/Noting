@@ -7,9 +7,11 @@ import { endSession, getUsage, triggerBlobDownload } from '../lib/api';
 import { formatBytes } from '../lib/format';
 import { applyTheme, getTheme, useTheme, type AccentName, type DensityName } from '../lib/theme';
 import {
+  getAmbientMotion,
   getAutosaveMs,
   getDefaultViewMode,
   getSpellcheck,
+  setAmbientMotion,
   setAutosaveMs,
   setDefaultViewMode,
   setSpellcheck,
@@ -37,6 +39,7 @@ export const Route = createFileRoute('/settings')({
 });
 
 const ACCENTS: { key: AccentName; label: string; dot: string }[] = [
+  { key: 'ember', label: 'Ember', dot: '#e8743b' },
   { key: 'gold', label: 'Gold', dot: '#c99a3f' },
   { key: 'emerald', label: 'Emerald', dot: '#10b981' },
   { key: 'cobalt', label: 'Cobalt', dot: '#3b82f6' },
@@ -54,6 +57,7 @@ function SettingsPage() {
   const [autosave, setAutosave] = useState(getAutosaveMs());
   const [defaultMode, setMode] = useState<DefaultViewMode>(getDefaultViewMode());
   const [spell, setSpell] = useState(getSpellcheck());
+  const [ambient, setAmbient] = useState(getAmbientMotion());
   const [bindingsVersion, setBindingsVersion] = useState(0);
   const [recording, setRecording] = useState<ShortcutId | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -163,7 +167,7 @@ function SettingsPage() {
           <ArrowLeft className="size-4" />
         </Link>
         <div>
-          <h1 className="text-base font-semibold text-zinc-100">Settings</h1>
+          <h1 className="font-display text-lg font-medium text-zinc-100">Settings</h1>
           <p className="font-mono text-[11px] text-zinc-500">
             appearance · editor · shortcuts · storage
           </p>
@@ -206,6 +210,22 @@ function SettingsPage() {
                 ))}
               </div>
             </Row>
+            <Row label="Ambient motion">
+              <Toggle
+                on={ambient}
+                label="Ambient motion"
+                onFlip={() => {
+                  const next = !ambient;
+                  setAmbientMotion(next); // also fires the repaint event
+                  setAmbient(next);
+                  toast.success(next ? 'Ink field is flowing' : 'Ink field paused');
+                }}
+              />
+            </Row>
+            <p className="text-[11px] text-zinc-600">
+              A slow ink-and-ember shader on the welcome, unlock, and invite screens. Reduced-motion
+              users always get a still frame.
+            </p>
           </CardContent>
         </Card>
 

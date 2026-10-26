@@ -2,6 +2,7 @@
   "rewrites": [
     { "source": "/api/ai", "destination": "/api/router?route=ai" },
     { "source": "/api/ask", "destination": "/api/router?route=ask" },
+    { "source": "/api/assistant", "destination": "/api/router?route=assistant" },
     { "source": "/api/challenge", "destination": "/api/router?route=challenge" },
     { "source": "/api/cron-purge", "destination": "/api/router?route=cron-purge" },
     { "source": "/api/documents", "destination": "/api/router?route=documents" },

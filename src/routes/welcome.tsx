@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { motion } from 'motion/react';
 import {
@@ -10,6 +10,7 @@ import {
   SplitSquareHorizontal,
   Tags,
 } from 'lucide-react';
+import { AmbientInk } from '../components/ambient/AmbientInk';
 
 export const Route = createFileRoute('/welcome')({
   component: WelcomePage,
@@ -23,9 +24,19 @@ function WelcomePage() {
   }, []);
 
   return (
-    <div className="min-h-screen">
+    // `isolate` is load-bearing: __root__ wraps every page in an opaque
+    // bg-zinc-950 div, and negative-z children paint BELOW in-flow block
+    // backgrounds — without its own stacking context the -z-10 shader would
+    // be buried under the root background.
+    <div className="grain relative isolate min-h-screen">
+      <Suspense fallback={null}>
+        <AmbientInk />
+      </Suspense>
       <header className="mx-auto flex max-w-3xl items-center justify-between px-4 py-5 sm:px-6">
-        <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
+        <span className="flex items-center gap-2 font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">
+          <span className="ember-dot size-1.5" aria-hidden />
+          notes
+        </span>
         <Link
           to="/"
           className="flex items-center gap-1.5 rounded-lg bg-accent-500 px-3.5 py-2 text-sm font-medium text-zinc-950 transition-transform hover:brightness-110 active:translate-y-px"
@@ -41,7 +52,7 @@ function WelcomePage() {
           transition={{ duration: 0.5, ease: EASE }}
           className="pt-10"
         >
-          <h1 className="max-w-xl text-4xl leading-[1.05] font-semibold tracking-tight text-zinc-100 md:text-5xl">
+          <h1 className="font-display max-w-xl text-4xl leading-[1.05] font-medium tracking-tight text-zinc-100 md:text-5xl">
             A quiet place for loud thoughts.
           </h1>
           <p className="mt-4 max-w-md text-base leading-relaxed text-zinc-400">

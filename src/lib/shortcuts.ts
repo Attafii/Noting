@@ -1,10 +1,23 @@
 import { useEffect } from 'react';
+import type { ShortcutBinding, ShortcutId } from './shortcuts-core';
 
 /**
  * Global keyboard shortcuts, dispatched as window CustomEvents so unrelated
  * components can react without prop drilling. Bindings are customizable in
  * Settings (persisted to localStorage) — defaults below.
+ *
+ * The pure binding/label data lives in `shortcuts-core.ts` so the server-side
+ * assistant guide can reuse it without importing React.
  */
+export {
+  DEFAULT_BINDINGS,
+  SHORTCUT_LABELS,
+  formatBinding,
+  type ShortcutBinding,
+  type ShortcutId,
+} from './shortcuts-core';
+import { DEFAULT_BINDINGS } from './shortcuts-core';
+
 export const SHORTCUT_EVENTS = {
   saveNow: 'noting:save-now',
   togglePreview: 'noting:toggle-preview',
@@ -22,32 +35,6 @@ export type HomeTab = 'overview' | 'calendar' | 'board';
 
 /** Side panel tabs: files, ask, or the wikilink graph. */
 export type SideTab = 'files' | 'ask' | 'links';
-
-export interface ShortcutBinding {
-  /** Require Ctrl/Cmd. */
-  mod: boolean;
-  /** Lowercase key (e.g. 's', 'p', '/'). */
-  key: string;
-}
-
-export type ShortcutId =
-  'saveNow' | 'togglePreview' | 'toggleHistory' | 'openPalette' | 'focusSearch';
-
-export const DEFAULT_BINDINGS: Record<ShortcutId, ShortcutBinding> = {
-  saveNow: { mod: true, key: 's' },
-  togglePreview: { mod: true, key: 'p' },
-  toggleHistory: { mod: true, key: 'h' },
-  openPalette: { mod: true, key: 'k' },
-  focusSearch: { mod: false, key: '/' },
-};
-
-export const SHORTCUT_LABELS: Record<ShortcutId, string> = {
-  saveNow: 'Save note now',
-  togglePreview: 'Toggle Write / Preview',
-  toggleHistory: 'Toggle version history',
-  openPalette: 'Command palette',
-  focusSearch: 'Focus note search',
-};
 
 const OVERRIDES_KEY = 'shortcut-overrides';
 
@@ -84,11 +71,6 @@ export function resetBindings(): void {
   } catch {
     /* ignore */
   }
-}
-
-export function formatBinding(binding: ShortcutBinding): string {
-  const key = binding.key === ' ' ? 'Space' : binding.key.toUpperCase();
-  return binding.mod ? `Ctrl/⌘ ${key}` : key === '/' ? '/' : key;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

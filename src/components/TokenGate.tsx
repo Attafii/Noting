@@ -66,10 +66,13 @@ export function TokenGate({ onSaved }: TokenGateProps) {
         className="w-full max-w-md"
       >
         <div className="mb-5 flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900/80 text-zinc-300">
             <SquareTerminal className="size-4" />
           </span>
-          <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
+          <span className="flex items-center gap-2 font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">
+            <span className="ember-dot size-1.5" aria-hidden />
+            notes
+          </span>
           <span className="ml-auto flex items-center gap-1.5 rounded-full border border-emerald-900/60 bg-emerald-950/40 px-2.5 py-1 text-[11px] text-emerald-300">
             <ShieldCheck className="size-3" />
             private by design
@@ -238,7 +241,7 @@ function UnlockForm({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-[15px] font-semibold text-zinc-100">Welcome back</h1>
+        <h1 className="font-display text-[17px] font-medium text-zinc-100">Welcome back</h1>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
           Your token unlocks the workspace — your answer or recovery code opens the door.
         </p>
@@ -572,7 +575,9 @@ function GenerateForm({
             <BadgeCheck className="size-5" />
           </span>
           <div>
-            <h1 className="text-[15px] font-semibold text-zinc-100">Your token is ready</h1>
+            <h1 className="font-display text-[17px] font-medium text-zinc-100">
+              Your token is ready
+            </h1>
             <p className="text-xs text-zinc-500">Shown once — it will never appear again.</p>
           </div>
         </div>
@@ -667,7 +672,7 @@ function GenerateForm({
           <span className="h-px w-6 bg-zinc-800" aria-hidden="true" />
           <StepDot label="Details" active={step === 2} done={false} />
         </div>
-        <h1 className="mt-3 text-[15px] font-semibold text-zinc-100">
+        <h1 className="font-display mt-3 text-[17px] font-medium text-zinc-100">
           {step === 1 ? 'Choose your security question' : 'Almost there'}
         </h1>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">

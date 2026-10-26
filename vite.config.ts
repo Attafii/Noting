@@ -16,8 +16,8 @@ export default defineConfig({
         name: 'noting',
         short_name: 'noting',
         description: 'noting — a quiet place for loud thoughts',
-        theme_color: '#09090b',
-        background_color: '#09090b',
+        theme_color: '#0c0b0a',
+        background_color: '#0c0b0a',
         display: 'standalone',
         start_url: '/',
         icons: [

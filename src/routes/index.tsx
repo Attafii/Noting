@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'motion/react';
@@ -20,6 +20,8 @@ import {
 import { toast } from 'sonner';
 import NoteEditor from '../components/NoteEditor';
 import { CommandPalette } from '../components/CommandPalette';
+import { EmberAssistant } from '../components/EmberAssistant';
+import { AmbientInk } from '../components/ambient/AmbientInk';
 import { CollapsibleRow, NotesSidebar } from '../components/NotesSidebar';
 import { OnboardingTour } from '../components/OnboardingTour';
 import { CalendarView } from '../components/planner/CalendarView';
@@ -184,8 +186,13 @@ function IndexComponent() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      // `isolate` keeps the -z-10 shader above this branch's own opaque
+      // background (negative-z paints below block backgrounds otherwise).
+      <div className="grain relative isolate min-h-screen bg-zinc-950 text-zinc-100">
         <AmbientBackground />
+        <Suspense fallback={null}>
+          <AmbientInk />
+        </Suspense>
         <TokenGate onSaved={handleTokenSaved} />
       </div>
     );
@@ -363,6 +370,8 @@ function AuthedWorkspace({
       <CommandPalette onSelectNote={onSelect} onOpenSettings={onOpenSettings} onHome={onHome} />
       <OnboardingTour />
       <ReminderNotifier notes={notesQuery.data ?? []} onOpenNote={onSelect} />
+      {/* Ember assistant: workspace-only (session-gated server-side too). */}
+      <EmberAssistant onOpenNote={onSelect} onUnauthorized={onUnauthorized} />
       <main
         className={cn(
           'mx-auto grid max-w-6xl grid-cols-1 items-start gap-6 px-4 pt-6 pb-24 sm:px-6 lg:pb-8',
@@ -780,7 +789,9 @@ function HomeDashboard({
           ) : (
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <div>
-                <p className="text-sm text-zinc-300">A blank page, no noise.</p>
+                <p className="font-display text-[15px] font-medium text-zinc-200">
+                  A blank page, no noise.
+                </p>
                 <p className="mx-auto mt-1 max-w-xs text-xs text-zinc-500">
                   Capture something above, press Ctrl+K to jump anywhere, and paste images straight
                   into the editor — they land in Files automatically.

@@ -21,7 +21,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { createNote, listDocuments, listNotesSorted, saveNote, triggerBlobDownload } from '../lib/api';
+import {
+  createNote,
+  listDocuments,
+  listNotesSorted,
+  saveNote,
+  triggerBlobDownload,
+} from '../lib/api';
 import { encryptText } from '../lib/crypto';
 import { getCryptoKey, useE2E } from '../lib/e2e';
 import { useFocusTrap } from '../lib/focus-trap';

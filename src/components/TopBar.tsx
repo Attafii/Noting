@@ -103,7 +103,10 @@ export function TopBar({
       <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700/70 bg-zinc-900 text-zinc-300">
         <SquareTerminal className="size-4" />
       </span>
-      <span className="font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">notes</span>
+      <span className="flex items-center gap-2 font-mono text-xs tracking-[0.22em] text-zinc-300 uppercase">
+        <span className="ember-dot size-1.5" aria-hidden />
+        notes
+      </span>
     </>
   );
 
@@ -232,7 +235,13 @@ export function TopBar({
                       }}
                     />
                     <MenuItem
-                      icon={theme.mode === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+                      icon={
+                        theme.mode === 'dark' ? (
+                          <Sun className="size-3.5" />
+                        ) : (
+                          <Moon className="size-3.5" />
+                        )
+                      }
                       label={theme.mode === 'dark' ? 'Light mode' : 'Dark mode'}
                       onClick={() => {
                         const next = getTheme();

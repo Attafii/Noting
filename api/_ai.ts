@@ -6,6 +6,12 @@
 
 const OR_BASE = 'https://openrouter.ai/api/v1';
 const CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+/**
+ * Assistant (Ember) model — may be pointed at a stronger conversational
+ * model than format/write without touching their default. Falls back to the
+ * shared chat model so a deployment works with zero extra config.
+ */
+export const ASSISTANT_MODEL = process.env.OPENROUTER_ASSISTANT_MODEL || CHAT_MODEL;
 /** Native 1024 dims — must match document_chunks.embedding. */
 export const EMBED_MODEL = process.env.OPENROUTER_EMBED_MODEL || 'baai/bge-m3';
 export const EMBED_DIMS = 1024;
@@ -113,10 +119,11 @@ export async function chatComplete(
   messages: ChatMessage[],
   timeoutMs = 15000,
   maxTokens = 2048,
+  model = CHAT_MODEL,
 ): Promise<{ text: string } | { failure: ChatFailure }> {
   const outcome = await postJson(
     '/chat/completions',
-    { model: CHAT_MODEL, messages, temperature: 0.3, max_tokens: maxTokens },
+    { model, messages, temperature: 0.3, max_tokens: maxTokens },
     timeoutMs,
   );
   if ('failure' in outcome) {
@@ -134,6 +141,98 @@ export async function chatComplete(
     return { failure: 'degenerate' };
   }
   return { text };
+}
+
+/**
+ * Streaming variant of chatComplete for the assistant: POSTs with
+ * `stream: true`, forwards each content delta through `onDelta` as it
+ * arrives, and still returns the full text at the end (so degeneration
+ * checks and logging behave exactly like the non-streaming path).
+ *
+ * Note: deltas are already flushed to the caller by the time a degenerate
+ * final result is detected — the route surfaces that as a stream `error`
+ * frame after partial output (the client keeps the partial text and offers
+ * a retry).
+ */
+export async function chatStream(
+  messages: ChatMessage[],
+  onDelta: (text: string) => void,
+  timeoutMs = 25000,
+  maxTokens = 2048,
+  model = CHAT_MODEL,
+): Promise<{ text: string } | { failure: ChatFailure }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let full = '';
+  try {
+    const res = await fetch(`${OR_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: orHeaders(),
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.6,
+        max_tokens: maxTokens,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok || !res.body) {
+      console.error('OpenRouter stream upstream status', res.status);
+      return { failure: 'upstream' };
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // OpenAI-style SSE: lines of `data: {...}`, blank-line separated;
+      // `data: [DONE]` terminates. Handle partial frames across chunks.
+      let sep: number;
+      while ((sep = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, sep).trimEnd();
+        buffer = buffer.slice(sep + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') {
+          buffer = '';
+          break;
+        }
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            full += delta;
+            onDelta(delta);
+          }
+        } catch {
+          /* skip malformed frame — stream continues */
+        }
+      }
+    }
+    if (!full) return { failure: 'empty' };
+    if (isDegenerate(full)) {
+      console.error('OpenRouter stream degenerate output', full.length);
+      return { failure: 'degenerate' };
+    }
+    return { text: full };
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      // A timed-out stream that already produced output is still usable:
+      // callers got the deltas; keep the text if it passed quality checks.
+      if (full.length > 0 && !isDegenerate(full)) return { text: full };
+      console.error('OpenRouter stream timeout', full.length);
+      return { failure: 'timeout' };
+    }
+    console.error('OpenRouter stream network error', e);
+    return { failure: 'upstream' };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**

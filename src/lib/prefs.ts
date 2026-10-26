@@ -5,6 +5,7 @@ export type DefaultViewMode = 'write' | 'preview' | 'split';
 const AUTOSAVE_KEY = 'editor-autosave-ms';
 const MODE_KEY = 'editor-default-mode';
 const SPELL_KEY = 'editor-spellcheck';
+const AMBIENT_KEY = 'ambient-motion';
 
 export function getAutosaveMs(): number {
   try {
@@ -55,5 +56,32 @@ export function setSpellcheck(on: boolean): void {
     localStorage.setItem(SPELL_KEY, on ? '1' : '0');
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Ambient shader motion on the landing/unlock/invite pages. Defaults ON —
+ * users who prefer less motion get a static frame instead via
+ * `prefers-reduced-motion` regardless of this switch.
+ */
+export function getAmbientMotion(): boolean {
+  try {
+    return localStorage.getItem(AMBIENT_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function setAmbientMotion(on: boolean): void {
+  try {
+    localStorage.setItem(AMBIENT_KEY, on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+  // Let a live InkField repaint/restart without remounting the page.
+  try {
+    window.dispatchEvent(new Event('noting:ambient-motion'));
+  } catch {
+    /* ignore — SSR/tests without a window */
   }
 }

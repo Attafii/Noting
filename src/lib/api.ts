@@ -857,6 +857,117 @@ export function adminCreateInvite(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Assistant ("Ember") — session-only conversational help + note search.
+// Two transports: SSE streaming (preferred) with a JSON fallback; both share
+// the same response contract ({ answer, sources, fallback?, warning? }).
+// ---------------------------------------------------------------------------
+
+export type AssistantMode = 'help' | 'notes';
+
+export interface AssistantResult {
+  answer: string;
+  sources: AskSource[];
+  fallback?: boolean;
+  warning?: string;
+}
+
+interface AssistantStreamCallbacks {
+  /** Called for each text delta as it arrives. */
+  onDelta: (text: string) => void;
+}
+
+/**
+ * Ask the assistant with streaming (SSE). Resolves with the complete result
+ * once the server sends `done`; `onDelta` receives incremental text for the
+ * typing effect. Falls back to the JSON transport when streaming isn't
+ * available (older proxies, quota/validation JSON responses).
+ */
+export async function assistantAsk(
+  input: { mode: AssistantMode; messages: AskTurn[] },
+  { onDelta }: AssistantStreamCallbacks,
+): Promise<AssistantResult> {
+  let res: Response;
+  try {
+    res = await fetch('/api/assistant', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-noting-client': getSessionId(),
+      },
+      body: JSON.stringify({ ...input, stream: true }),
+    });
+  } catch {
+    throw new ApiError(0, 'Network error — check your connection');
+  }
+
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('text/event-stream')) {
+    // JSON path: validation/quota errors, unconfigured AI, or a proxy that
+    // stripped the stream. Reuse the shared error/response handling.
+    if (!res.ok) {
+      const body = await readJson(res).catch(() => null);
+      throw new ApiError(res.status, errorFromBody(body, `Request failed (${res.status})`));
+    }
+    return (await readJson(res)) as AssistantResult;
+  }
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status || 500, 'Assistant request failed');
+  }
+
+  // SSE parse: frames are `data: {…}` / `data: [DONE]`, LF-separated.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let answer = '';
+  let sources: AskSource[] = [];
+  let streamError: string | null = null;
+
+  const handleFrame = (payload: string) => {
+    if (payload === '[DONE]') return;
+    try {
+      const event = JSON.parse(payload) as
+        | { type: 'delta'; text: string }
+        | { type: 'done'; answer: string; sources: AskSource[] }
+        | { type: 'error'; message: string };
+      if (event.type === 'delta') {
+        answer += event.text;
+        onDelta(event.text);
+      } else if (event.type === 'done') {
+        answer = event.answer || answer;
+        sources = event.sources ?? [];
+      } else if (event.type === 'error') {
+        streamError = event.message;
+      }
+    } catch {
+      /* skip malformed frame */
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, sep).trimEnd();
+      buffer = buffer.slice(sep + 1);
+      if (line.startsWith('data:')) handleFrame(line.slice(5).trim());
+    }
+  }
+
+  if (streamError) {
+    throw new ApiError(502, streamError);
+  }
+  if (!answer) {
+    throw new ApiError(502, 'The assistant returned nothing — try again');
+  }
+  return { answer, sources };
+}
+
 export function fetchQuestion(
   token: string,
   session_id: string,

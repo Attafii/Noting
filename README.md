@@ -27,6 +27,8 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
 - Read-only share links: expiring `/s?t=…` URLs (1–30 days) for plaintext notes — only sha256(token) is stored, links are revocable, encrypted notes can never be shared
 - "Format with AI" button with fallback to original text when the AI backend fails
 - "Write with AI" modal: describe what to write, pick style/structure/length presets (or one-tap actions like continue/summarize), preview the draft, then insert at cursor, append, replace, or copy — optional note-as-context, never sent for encrypted notes
+- **Ember**, the in-app assistant: floating button (bottom-right, `Ctrl/Cmd+/`) with two modes — _Help_ (answers about Noting from a static product guide, reads no user data) and _My notes_ (conversational search over plaintext notes with citations; encrypted notes are excluded); streams replies live, session-only, chat memory clears on reload
+- **Ink & ember identity**: warm near-black surfaces, ember accent (gold/emerald/cobalt still selectable), Newsreader display headings, film-grain texture, breathing ember-dot motif, and a slow WebGL ink-field shader on the welcome/unlock/invite screens (30fps cap, pauses when hidden, static frame under reduced motion, Settings toggle)
 - End-to-end encryption (AES-GCM, token-derived key) for notes and files, with migration tools
 - Command palette (`Ctrl/Cmd+K`), keyboard shortcuts, full backup/restore as `.zip`
 - Per-endpoint rate limiting, security headers, health endpoint
@@ -41,7 +43,7 @@ A secure, single-page personal workspace for notes, files, and document Q&A. It 
    - `CHALLENGE_SIGNING_SECRET` — separate HMAC secret for the built-in human-check
    - `CRON_SECRET` — bearer secret for the daily `/api/cron-purge` retention sweep (Vercel Cron sends it automatically); generate like `GLOBAL_SECRET_TOKEN`
    - `NEON_CONNECTION_STRING` — your Neon Postgres connection string
-   - `OPENROUTER_API_KEY` — OpenRouter API key (formatting and document Q&A fall back gracefully without it)
+   - `OPENROUTER_API_KEY` — OpenRouter API key (formatting, document Q&A, and the Ember assistant fall back gracefully without it)
    - Optional limits: `MAX_STORAGE_BYTES`, `MAX_FILE_COUNT`, `MAX_NOTES`, and `MAX_AI_CALLS_PER_DAY`
    - Turnstile fallback (optional, free): `VITE_TURNSTILE_SITEKEY` + `TURNSTILE_SECRET_KEY` — Cloudflare dashboard → Turnstile → widget → Settings → Allowed hostnames `noting.attafii.dev` (+ `noting-notes.vercel.app` for the old URL, + `localhost` for dev). For local dev you can use the [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) instead of a real widget. After any domain move you must add the new hostname in that list AND set `TURNSTILE_ALLOWED_HOSTNAMES` (or rely on the updated defaults) — otherwise the widget shows a hostname error and `/api/tokens` rejects its tokens.
 3. Database migrations (the runner records checksums and skips completed files):
@@ -97,6 +99,7 @@ Data endpoints accept the HttpOnly `noting_session` cookie. During the transitio
 | GET                   | `/api/download?id=`  | Binary download with Unicode-safe filename (header auth only; legacy `?token=` removed)                                                                                                                                                                                                         |
 | POST                  | `/api/ai`            | Format text (`{text}`) or generate a draft (`{action:"write", instruction, style?, structure?, length?, context?}`); original/fallback + warning on failure                                                                                                                                     |
 | POST                  | `/api/ask`           | Q&A with `{ scope: docs \| notes \| all }` over indexed documents and/or plaintext notes; cited sources, keyword fallback                                                                                                                                                                       |
+| POST                  | `/api/assistant`     | Conversational "Ember" assistant (session-only): `{ mode: help \| notes, messages, stream? }` — Help answers from the static product guide (reads no user data), notes retrieves plaintext notes with citations; SSE streaming with JSON fallback; spends the daily AI budget, 10/min           |
 | GET                   | `/api/share?t=`      | Public read-only note behind a share token (unauthenticated; only sha256 hashes are stored, uniform 404, 30/min)                                                                                                                                                                                |
 | GET/POST/DELETE       | `/api/shares`        | Manage the caller's share links: list (`?note_id=`), mint (`{ note_id, days }`, plaintext token returned once), revoke (`?id=`) — plaintext notes only                                                                                                                                          |
 | GET                   | `/api/challenge`     | Visual odd-one-out challenge (DB-free, 30/min, HMAC-signed, 5-min expiry)                                                                                                                                                                                                                       |
@@ -105,7 +108,7 @@ Data endpoints accept the HttpOnly `noting_session` cookie. During the transitio
 | POST                  | `/api/invite-redeem` | Redeem an invite code (human-check; consumes the single-use code, generic 403 for invalid/used/expired; mints nothing)                                                                                                                                                                          |
 | GET/POST              | `/api/invites`       | Admin invite management (`x-bridge-token: GLOBAL_SECRET_TOKEN`; GET lists status/expiry, POST `{valid_days}` creates a code — returned once, only its hash is stored; 404 for everyone else)                                                                                                    |
 
-Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI, 30/min challenge, 5/min mint, 5/min invite redeem, 30/min invite admin, 20/min share management, 30/min share reads.
+Rate limits: 120 req/min default (DB-backed sliding window), 30/min uploads, 10/min AI + assistant, 30/min challenge, 5/min mint, 5/min invite redeem, 30/min invite admin, 20/min share management, 30/min share reads.
 
 ## Deployment (Vercel)
 

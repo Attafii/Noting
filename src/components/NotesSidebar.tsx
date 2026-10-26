@@ -743,9 +743,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                 confirming={confirmId === note.id}
                 deleting={remove.isPending && remove.variables?.id === note.id}
                 menuOpen={rowMenuId === note.id}
-                onMenuToggle={() =>
-                  setRowMenuId((prev) => (prev === note.id ? null : note.id))
-                }
+                onMenuToggle={() => setRowMenuId((prev) => (prev === note.id ? null : note.id))}
                 onToggleCheck={() => toggleSelect(note.id)}
                 onSelect={() => onSelect(note.id)}
                 onPin={() => patch.mutate({ id: note.id, fields: { pinned: !note.pinned } })}
@@ -806,10 +804,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                 className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-900/60 hover:text-zinc-300"
               >
                 <ChevronDown
-                  className={cn(
-                    'size-3.5 transition-transform',
-                    !showArchiveTrash && '-rotate-90',
-                  )}
+                  className={cn('size-3.5 transition-transform', !showArchiveTrash && '-rotate-90')}
                 />
                 Archived & trash
                 <span className="ml-auto font-mono text-[10px] text-zinc-600">
@@ -855,9 +850,7 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                         onFavorite={() =>
                           patch.mutate({ id: note.id, fields: { favorite: !note.favorite } })
                         }
-                        onArchive={() =>
-                          patch.mutate({ id: note.id, fields: { archived: false } })
-                        }
+                        onArchive={() => patch.mutate({ id: note.id, fields: { archived: false } })}
                         archivedView
                         onDragStart={(e) => {
                           e.dataTransfer.setData('text/noting-note', String(note.id));
@@ -884,7 +877,8 @@ export function NotesSidebar({ selectedId, onSelect, onUnauthorized }: NotesSide
                     {/* Note trash — 30 days, like files. */}
                     <p className="px-2 pt-2 pb-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-500 uppercase">
                       Trash
-                      {typeof trashQuery.data?.length === 'number' && ` · ${trashQuery.data.length}`}
+                      {typeof trashQuery.data?.length === 'number' &&
+                        ` · ${trashQuery.data.length}`}
                     </p>
                     {trashQuery.isPending && (
                       <div className="flex flex-col gap-1.5 p-1">
@@ -1375,6 +1369,8 @@ function NoteRow({
             />
           ) : (
             <p className="flex items-center gap-1.5 truncate text-[13px] font-medium text-zinc-200">
+              {/* Signature: the ember marks the note you're writing in. */}
+              {selected && <span className="ember-dot size-1.5 shrink-0" aria-hidden />}
               <span className="truncate">{note.title}</span>
               {note.enc && <Lock className="size-3 shrink-0 text-accent-300" />}
               {note.favorite && (

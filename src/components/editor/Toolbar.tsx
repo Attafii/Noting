@@ -13,16 +13,7 @@ import {
 import { cn } from '../../lib/utils';
 
 export type ToolbarAction =
-  | 'h1'
-  | 'h2'
-  | 'bold'
-  | 'italic'
-  | 'strike'
-  | 'checklist'
-  | 'bullet'
-  | 'code'
-  | 'quote'
-  | 'link';
+  'h1' | 'h2' | 'bold' | 'italic' | 'strike' | 'checklist' | 'bullet' | 'code' | 'quote' | 'link';
 
 const GROUPS: { actions: { key: ToolbarAction; title: string; icon: React.ReactNode }[] }[] = [
   {

@@ -153,8 +153,11 @@ async function retrieveDocs(
  * (the trigram index in db/schema.sql serves the ILIKE). Encrypted notes are
  * excluded by construction. Never throws — an empty array degrades to a
  * "no matching notes" response.
+ *
+ * Exported for `_route-assistant.ts` (notes-mode chat reuses this exact
+ * retrieval so both endpoints share one privacy contract).
  */
-async function retrieveNotes(
+export async function retrieveNotes(
   sql: NeonQueryFunction<false, false>,
   retrievalQuery: string,
   userId: string,
